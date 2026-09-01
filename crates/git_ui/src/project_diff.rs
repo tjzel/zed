@@ -1,4 +1,5 @@
 use crate::{
+    compare_file_view::CompareFileView,
     conflict_view::ConflictAddon,
     diff_file_tree::{DiffFileTree, DiffFileTreeEvent, DiffTreeEntry},
     git_panel::{GitPanel, GitPanelAddon, GitStatusEntry},
@@ -6,7 +7,7 @@ use crate::{
     picker_prompt,
 };
 use agent_settings::AgentSettings;
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
 use collections::{HashMap, HashSet};
 use editor::{
@@ -384,6 +385,7 @@ impl ProjectDiff {
         })
     }
 
+    #[cfg(test)]
     fn new_with_default_branch(
         project: Entity<Project>,
         workspace: Entity<Workspace>,
@@ -391,7 +393,7 @@ impl ProjectDiff {
         cx: &mut App,
     ) -> Task<Result<Entity<Self>>> {
         let Some(repo) = project.read(cx).git_store().read(cx).active_repository() else {
-            return Task::ready(Err(anyhow!("No active repository")));
+            return Task::ready(Err(anyhow::anyhow!("No active repository")));
         };
         let main_branch = repo.update(cx, |repo, _| repo.default_branch(true));
         window.spawn(cx, async move |cx| {
@@ -513,11 +515,20 @@ impl ProjectDiff {
             &file_tree,
             window,
             |this, _, event: &DiffFileTreeEvent, window, cx| match event {
-                DiffFileTreeEvent::OpenEntry { path_key } => {
-                    this.move_to_path(path_key.clone(), window, cx);
-                    let editor_focus = this.editor.read(cx).rhs_editor().focus_handle(cx);
-                    window.focus(&editor_focus, cx);
-                }
+                DiffFileTreeEvent::OpenEntry {
+                    path_key,
+                    repo_path,
+                } => match this.diff_base(cx) {
+                    DiffBase::Merge { base_ref } => {
+                        let base_ref = base_ref.clone();
+                        this.open_compare_file_view(repo_path.clone(), base_ref, window, cx);
+                    }
+                    DiffBase::Head => {
+                        this.move_to_path(path_key.clone(), window, cx);
+                        let editor_focus = this.editor.read(cx).rhs_editor().focus_handle(cx);
+                        window.focus(&editor_focus, cx);
+                    }
+                },
             },
         );
         let show_file_tree = matches!(branch_diff.read(cx).diff_base(), DiffBase::Merge { .. });
@@ -590,6 +601,61 @@ impl ProjectDiff {
         let path_key = PathKey::with_sort_prefix(sort_prefix, entry.repo_path.as_ref().clone());
 
         self.move_to_path(path_key, window, cx)
+    }
+
+    fn open_compare_file_view(
+        &mut self,
+        repo_path: RepoPath,
+        base_ref: SharedString,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(load) = self
+            .branch_diff
+            .update(cx, |branch_diff, cx| {
+                branch_diff.load_single_buffer(&repo_path, cx)
+            })
+        else {
+            return;
+        };
+        let Some(project_path) = self
+            .branch_diff
+            .read(cx)
+            .repo()
+            .and_then(|repo| repo.read(cx).repo_path_to_project_path(&repo_path, cx))
+        else {
+            return;
+        };
+        let workspace = self.workspace.clone();
+        let project = self.project.clone();
+        cx.spawn_in(window, async move |_, cx| {
+            let (buffer, diff) = load.await?;
+            workspace.update_in(cx, |workspace, window, cx| {
+                let existing = workspace.items_of_type::<CompareFileView>(cx).find(|item| {
+                    let item = item.read(cx);
+                    *item.project_path() == project_path && *item.base_ref() == base_ref
+                });
+                if let Some(existing) = existing {
+                    workspace.activate_item(&existing, true, true, window, cx);
+                    return;
+                }
+                let workspace_entity = cx.entity();
+                let view = cx.new(|cx| {
+                    CompareFileView::new(
+                        buffer,
+                        diff,
+                        project_path,
+                        base_ref,
+                        project,
+                        workspace_entity,
+                        window,
+                        cx,
+                    )
+                });
+                workspace.add_item_to_active_pane(Box::new(view), None, true, window, cx);
+            })
+        })
+        .detach_and_log_err(cx);
     }
 
     pub fn move_to_project_path(

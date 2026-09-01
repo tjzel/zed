@@ -32,7 +32,10 @@ pub struct DiffTreeEntry {
 }
 
 pub enum DiffFileTreeEvent {
-    OpenEntry { path_key: PathKey },
+    OpenEntry {
+        path_key: PathKey,
+        repo_path: RepoPath,
+    },
 }
 
 impl EventEmitter<DiffFileTreeEvent> for DiffFileTree {}
@@ -248,6 +251,7 @@ impl DiffFileTree {
                 this.active_path = Some(repo_path.clone());
                 cx.emit(DiffFileTreeEvent::OpenEntry {
                     path_key: path_key.clone(),
+                    repo_path: repo_path.clone(),
                 });
                 cx.notify();
             }))

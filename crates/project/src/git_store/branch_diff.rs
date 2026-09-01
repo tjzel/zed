@@ -345,6 +345,23 @@ impl BranchDiff {
         output
     }
 
+    pub fn load_single_buffer(
+        &mut self,
+        repo_path: &RepoPath,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<(Entity<Buffer>, Entity<BufferDiff>)>>> {
+        let repo = self.repo.clone()?;
+        let tree_diff_entry = self
+            .tree_diff
+            .as_ref()
+            .and_then(|tree_diff| tree_diff.entries.get(repo_path))
+            .cloned();
+        self.project.update(cx, |_project, cx| {
+            let project_path = repo.read(cx).repo_path_to_project_path(repo_path, cx)?;
+            Some(Self::load_buffer(tree_diff_entry, project_path, repo, cx))
+        })
+    }
+
     #[instrument(skip_all)]
     fn load_buffer(
         branch_diff: Option<git::status::TreeDiffStatus>,
