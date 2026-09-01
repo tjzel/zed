@@ -592,6 +592,7 @@ impl TerminalElement {
         };
 
         let mut result = TextRun {
+            font_size_scale: None,
             len: indexed.c.len_utf8(),
             color: fg,
             background_color: None,
@@ -922,6 +923,7 @@ impl Element for TerminalElement {
                 let theme = cx.theme().clone();
 
                 let link_style = HighlightStyle {
+                    font_size: None,
                     color: Some(theme.colors().link_text_hover),
                     font_weight: Some(font_weight),
                     font_style: None,

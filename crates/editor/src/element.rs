@@ -8889,6 +8889,7 @@ impl LineWithInvisibles {
                         };
 
                         let run = TextRun {
+                            font_size_scale: text_style.font_size_scale,
                             len: x.len(),
                             font: text_style.font(),
                             color: text_style.color,
@@ -8959,6 +8960,7 @@ impl LineWithInvisibles {
                         }
 
                         styles.push(TextRun {
+                            font_size_scale: text_style.font_size_scale,
                             len: line_chunk.len(),
                             font: text_style.font(),
                             color: text_style.color,
@@ -9038,6 +9040,7 @@ impl LineWithInvisibles {
                 if segment_start_col > cursor_col {
                     let span_len = segment_start_col - cursor_col;
                     output_runs.push(TextRun {
+                        font_size_scale: text_run.font_size_scale,
                         len: span_len,
                         font: text_run.font.clone(),
                         color: text_run.color,
@@ -9052,6 +9055,7 @@ impl LineWithInvisibles {
                     let new_text_color =
                         ensure_minimum_contrast(text_run.color, *segment_color, min_contrast);
                     output_runs.push(TextRun {
+                        font_size_scale: text_run.font_size_scale,
                         len: segment_slice_end_col - cursor_col,
                         font: text_run.font.clone(),
                         color: new_text_color,
@@ -9068,6 +9072,7 @@ impl LineWithInvisibles {
             }
             if cursor_col < run_end_col {
                 output_runs.push(TextRun {
+                    font_size_scale: text_run.font_size_scale,
                     len: run_end_col - cursor_col,
                     font: text_run.font.clone(),
                     color: text_run.color,

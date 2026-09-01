@@ -443,6 +443,11 @@ impl VsCodeSettings {
                                     token_type: Some(k.clone()),
                                     token_modifiers: vec![],
                                     style: vec![],
+                                    // VS Code's semantic token styling has no
+                                    // size property; only its TextMate rules
+                                    // carry `fontSize`, and those are not
+                                    // imported here.
+                                    font_size: None,
                                     underline: if underline {
                                         Some(SemanticTokenColorOverride::InheritForeground(true))
                                     } else {

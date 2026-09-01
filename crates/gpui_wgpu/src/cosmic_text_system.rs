@@ -496,6 +496,11 @@ impl CosmicTextSystemState {
             } else {
                 runs.push(ShapedRun {
                     font_id,
+                    // TODO: cosmic-text shapes an entire line at a single size,
+                    // so per-run sizes from `FontRun::font_size` are not
+                    // honored here yet. Reporting the line size keeps
+                    // rasterization consistent with what was actually shaped.
+                    font_size,
                     glyphs: vec![shaped_glyph],
                 });
             }

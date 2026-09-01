@@ -14,7 +14,10 @@ use super::LineWrapper;
 /// A laid out and styled line of text
 #[derive(Default, Debug)]
 pub struct LineLayout {
-    /// The font size for this line
+    /// The base font size this line was laid out for.
+    ///
+    /// Individual runs may have been shaped at a different size; see
+    /// [`ShapedRun::font_size`].
     pub font_size: Pixels,
     /// The width of the line
     pub width: Pixels,
@@ -33,6 +36,11 @@ pub struct LineLayout {
 pub struct ShapedRun {
     /// The font id for this run
     pub font_id: FontId,
+    /// The size this run was shaped at.
+    ///
+    /// Runs within a line may differ in size, so glyphs must be rasterized at
+    /// this size rather than at [`LineLayout::font_size`].
+    pub font_size: Pixels,
     /// The glyphs that make up this run
     pub glyphs: Vec<ShapedGlyph>,
 }
@@ -795,12 +803,18 @@ impl LineLayoutCache {
     }
 }
 
-/// A run of text with a single font.
+/// A run of text with a single font at a single size.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 #[expect(missing_docs)]
 pub struct FontRun {
     pub len: usize,
     pub font_id: FontId,
+    /// The size to shape this run at.
+    ///
+    /// Runs within a line may differ in size. `Pixels` implements `Eq` and
+    /// `Hash`, so this participates in the line layout cache key and two
+    /// otherwise identical lines shaped at different sizes do not collide.
+    pub font_size: Pixels,
 }
 
 trait AsCacheKeyRef {

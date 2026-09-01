@@ -151,6 +151,7 @@ impl ShapedLine {
             if split_pos > 0 {
                 left_runs.push(ShapedRun {
                     font_id: run.font_id,
+                    font_size: run.font_size,
                     glyphs: run.glyphs[..split_pos].to_vec(),
                 });
             }
@@ -167,6 +168,7 @@ impl ShapedLine {
                     .collect();
                 right_runs.push(ShapedRun {
                     font_id: run.font_id,
+                    font_size: run.font_size,
                     glyphs: right_glyphs,
                 });
             }
@@ -366,7 +368,7 @@ fn paint_line(
         let mut max_glyph_size = size(px(0.), px(0.));
         let mut first_glyph_x = origin.x;
         for (run_ix, run) in layout.runs.iter().enumerate() {
-            max_glyph_size = text_system.bounding_box(run.font_id, layout.font_size).size;
+            max_glyph_size = text_system.bounding_box(run.font_id, run.font_size).size;
 
             for (glyph_ix, glyph) in run.glyphs.iter().enumerate() {
                 glyph_origin.x += glyph.position.x - prev_glyph_position.x;
@@ -521,14 +523,14 @@ fn paint_line(
                             glyph_origin + baseline_offset + vertical_offset,
                             run.font_id,
                             glyph.id,
-                            layout.font_size,
+                            run.font_size,
                         )?;
                     } else {
                         window.paint_glyph(
                             glyph_origin + baseline_offset + vertical_offset,
                             run.font_id,
                             glyph.id,
-                            layout.font_size,
+                            run.font_size,
                             color,
                         )?;
                     }
@@ -607,7 +609,7 @@ fn paint_line_background(
         let mut prev_glyph_position = Point::default();
         let mut max_glyph_size = size(px(0.), px(0.));
         for (run_ix, run) in layout.runs.iter().enumerate() {
-            max_glyph_size = text_system.bounding_box(run.font_id, layout.font_size).size;
+            max_glyph_size = text_system.bounding_box(run.font_id, run.font_size).size;
 
             for (glyph_ix, glyph) in run.glyphs.iter().enumerate() {
                 glyph_origin.x += glyph.position.x - prev_glyph_position.x;
@@ -771,6 +773,7 @@ mod tests {
                 ascent: px(12.0),
                 descent: px(4.0),
                 runs: vec![ShapedRun {
+                    font_size: px(16.),
                     font_id: FontId(0),
                     glyphs: shaped_glyphs,
                 }],
@@ -846,6 +849,7 @@ mod tests {
                 descent: px(4.0),
                 runs: vec![
                     ShapedRun {
+                        font_size: px(16.),
                         font_id: FontId(0),
                         glyphs: vec![
                             ShapedGlyph {
@@ -869,6 +873,7 @@ mod tests {
                         ],
                     },
                     ShapedRun {
+                        font_size: px(16.),
                         font_id: FontId(1),
                         glyphs: vec![
                             ShapedGlyph {

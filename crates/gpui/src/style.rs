@@ -408,6 +408,14 @@ pub struct TextStyle {
     /// The font size to use, in pixels or rems.
     pub font_size: AbsoluteLength,
 
+    /// A multiplier applied to `font_size` when shaping runs produced from this
+    /// style.
+    ///
+    /// Set by [`TextStyle::highlight`] from [`HighlightStyle::font_size`], and
+    /// carried into [`TextRun::font_size_scale`] by [`TextStyle::to_run`].
+    /// `None` is equivalent to `1.0` and leaves shaping unchanged.
+    pub font_size_scale: Option<f32>,
+
     /// The line height to use, in pixels or fractions
     pub line_height: DefiniteLength,
 
@@ -448,6 +456,7 @@ impl Default for TextStyle {
             font_features: FontFeatures::default(),
             font_fallbacks: None,
             font_size: rems(1.).into(),
+            font_size_scale: None,
             line_height: phi(),
             font_weight: FontWeight::default(),
             font_style: FontStyle::default(),
@@ -493,6 +502,13 @@ impl TextStyle {
             self.strikethrough = Some(strikethrough);
         }
 
+        if let Some(font_size) = style.font_size {
+            // Compose rather than overwrite, so a highlight layered on an
+            // already-scaled style multiplies instead of discarding the outer
+            // scale.
+            self.font_size_scale = Some(self.font_size_scale.unwrap_or(1.0) * font_size);
+        }
+
         self
     }
 
@@ -527,6 +543,7 @@ impl TextStyle {
             background_color: self.background_color,
             underline: self.underline,
             strikethrough: self.strikethrough,
+            font_size_scale: self.font_size_scale,
         }
     }
 }
@@ -555,6 +572,13 @@ pub struct HighlightStyle {
 
     /// Similar to the CSS `opacity` property, this will cause the text to be less vibrant.
     pub fade_out: Option<f32>,
+
+    /// A multiplier applied to the font size of the text this highlight styles.
+    ///
+    /// `None` is equivalent to `1.0`. `0.7` renders the highlighted run at 70%
+    /// of the surrounding text's size. A multiplier rather than an absolute
+    /// size keeps the highlight independent of the buffer font size setting.
+    pub font_size: Option<f32>,
 }
 
 impl Eq for HighlightStyle {}
@@ -569,6 +593,9 @@ impl Hash for HighlightStyle {
         self.strikethrough.hash(state);
         state.write_u32(u32::from_be_bytes(
             self.fade_out.map(|f| f.to_be_bytes()).unwrap_or_default(),
+        ));
+        state.write_u32(u32::from_be_bytes(
+            self.font_size.map(|f| f.to_be_bytes()).unwrap_or_default(),
         ));
     }
 }
@@ -917,6 +944,7 @@ impl From<&TextStyle> for HighlightStyle {
             underline: other.underline,
             strikethrough: other.strikethrough,
             fade_out: None,
+            font_size: other.font_size_scale,
         }
     }
 }
@@ -957,6 +985,12 @@ impl HighlightStyle {
                         .unwrap_or(source_fade)
                 })
                 .or(self.fade_out),
+            // Sizes compose multiplicatively, so layering a 0.5 highlight over
+            // a 0.7 one yields 0.35 rather than discarding the outer scale.
+            font_size: match (self.font_size, other.font_size) {
+                (Some(this), Some(other)) => Some(this * other),
+                (this, other) => other.or(this),
+            },
         }
     }
 }
@@ -1359,6 +1393,7 @@ mod tests {
         );
 
         let mut style_b = HighlightStyle {
+            font_size: None,
             color: Some(red()),
             strikethrough: Some(StrikethroughStyle {
                 thickness: px(2.),
@@ -1391,6 +1426,7 @@ mod tests {
         let mut style_c = expected_style;
 
         let style_d = HighlightStyle {
+            font_size: None,
             color: Some(blue().alpha(0.7)),
             strikethrough: Some(StrikethroughStyle {
                 thickness: px(4.),
@@ -1408,6 +1444,7 @@ mod tests {
         };
 
         let expected_style = HighlightStyle {
+            font_size: None,
             color: Some(red().blend(blue().alpha(0.7))),
             strikethrough: Some(StrikethroughStyle {
                 thickness: px(4.),

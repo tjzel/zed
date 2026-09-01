@@ -274,6 +274,12 @@ pub struct SemanticTokenRule {
     pub strikethrough: Option<SemanticTokenColorOverride>,
     pub font_weight: Option<SemanticTokenFontWeight>,
     pub font_style: Option<SemanticTokenFontStyle>,
+    /// A multiplier applied to the buffer font size for tokens this rule
+    /// matches. `1.0` leaves the size unchanged; `0.7` renders them at 70%.
+    ///
+    /// A multiplier rather than an absolute size keeps the rule independent of
+    /// the `buffer_font_size` setting.
+    pub font_size: Option<f32>,
 }
 
 impl SemanticTokenRule {
@@ -285,6 +291,7 @@ impl SemanticTokenRule {
             && self.strikethrough.is_none()
             && self.font_weight.is_none()
             && self.font_style.is_none()
+            && self.font_size.is_none()
     }
 }
 
