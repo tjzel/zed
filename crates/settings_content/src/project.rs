@@ -266,6 +266,16 @@ pub struct SemanticTokenRule {
     pub token_type: Option<String>,
     #[serde(default)]
     pub token_modifiers: Vec<String>,
+    /// Tree-sitter capture names required at the token's position. The rule
+    /// matches only if at least one listed name matches a capture there. A
+    /// name matches a capture exactly or as a dot-separated prefix
+    /// (`variable` matches `variable.parameter`). Empty means no requirement.
+    #[serde(default)]
+    pub syntax: Vec<String>,
+    /// Tree-sitter capture names that prevent this rule from matching at the
+    /// token's position, using the same name matching as `syntax`.
+    #[serde(default)]
+    pub not_syntax: Vec<String>,
     #[serde(default)]
     pub style: Vec<String>,
     pub foreground_color: Option<Rgba>,

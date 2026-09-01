@@ -442,6 +442,8 @@ impl VsCodeSettings {
                                 Some(SemanticTokenRule {
                                     token_type: Some(k.clone()),
                                     token_modifiers: vec![],
+                                    syntax: vec![],
+                                    not_syntax: vec![],
                                     style: vec![],
                                     // VS Code's semantic token styling has no
                                     // size property; only its TextMate rules
