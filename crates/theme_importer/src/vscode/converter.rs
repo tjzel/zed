@@ -263,6 +263,7 @@ impl VsCodeThemeConverter {
                     .font_style
                     .as_ref()
                     .and_then(|style| try_parse_font_weight(style)),
+                font_size: None,
             };
 
             if highlight_style.is_empty() {

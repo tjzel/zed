@@ -321,6 +321,7 @@ pub fn refine_theme(theme: &ThemeContent) -> Theme {
                     .and_then(|color| try_parse_color(color).ok()),
                 font_style: highlight.font_style.map(|s| s.into_gpui()),
                 font_weight: highlight.font_weight.map(|w| w.into_gpui()),
+                font_size: highlight.font_size,
                 ..Default::default()
             },
         )
