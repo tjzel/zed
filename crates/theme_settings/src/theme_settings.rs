@@ -344,6 +344,7 @@ pub fn refine_theme(theme: &ThemeContent) -> Theme {
                 font_style: highlight.font_style.map(|s| s.into_gpui()),
                 font_weight: highlight.font_weight.map(|w| w.into_gpui()),
                 font_size: highlight.font_size,
+                underline: crate::schema::underline_style(highlight.underline.as_ref()),
                 ..Default::default()
             },
         )
