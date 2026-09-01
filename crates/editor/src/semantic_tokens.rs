@@ -1,9 +1,10 @@
-use std::{collections::hash_map, sync::Arc, time::Duration};
+use std::{collections::hash_map, ops::Range, sync::Arc, time::Duration};
 
 use collections::{HashMap, HashSet};
 use futures::future::join_all;
 use gpui::{
-    App, Context, FontStyle, FontWeight, HighlightStyle, StrikethroughStyle, Task, UnderlineStyle,
+    App, Context, FontStyle, FontWeight, HighlightStyle, SharedString, StrikethroughStyle, Task,
+    UnderlineStyle,
 };
 use itertools::Itertools;
 use language::{LanguageName, LanguageRegistry, language_settings::LanguageSettings};
@@ -17,7 +18,7 @@ use settings::{
     SemanticTokenColorOverride, SemanticTokenFontStyle, SemanticTokenFontWeight, SemanticTokenRule,
     SemanticTokenRules, Settings as _,
 };
-use text::BufferId;
+use text::{BufferId, ToOffset as _};
 use theme::SyntaxTheme;
 use ui::ActiveTheme as _;
 
@@ -279,11 +280,11 @@ impl Editor {
                             }
                         }
 
-                        let language_name = editor
-                            .buffer()
-                            .read(cx)
-                            .buffer(buffer_id)
+                        let buffer = editor.buffer().read(cx).buffer(buffer_id);
+                        let language_name = buffer
+                            .as_ref()
                             .and_then(|buf| buf.read(cx).language().map(|l| l.name()));
+                        let buffer_snapshot = buffer.map(|buf| buf.read(cx).snapshot());
 
                         let Some(project) = project.upgrade() else {
                             return;
@@ -316,6 +317,7 @@ impl Editor {
                                         stylizer,
                                         precedences.get(&server_id).copied().unwrap_or_default(),
                                         &multi_buffer_snapshot,
+                                        buffer_snapshot.as_ref(),
                                         &mut interner,
                                         theme,
                                     ));
@@ -381,6 +383,7 @@ fn buffer_into_editor_highlights<'a, 'b>(
     stylizer: &'a SemanticTokenStylizer,
     precedence: u32,
     multi_buffer_snapshot: &'a multi_buffer::MultiBufferSnapshot,
+    buffer_snapshot: Option<&'a language::BufferSnapshot>,
     interner: &'b mut HighlightStyleInterner,
     theme: &'a SyntaxTheme,
 ) -> impl Iterator<Item = SemanticTokenHighlight> + use<'a, 'b> {
@@ -395,7 +398,21 @@ fn buffer_into_editor_highlights<'a, 'b>(
         .zip(buffer_tokens)
         .filter_map(move |((multi_buffer_start, multi_buffer_end), token)| {
             let range = multi_buffer_start?..multi_buffer_end?;
-            let style = convert_token(stylizer, theme, token.token_type, token.token_modifiers)?;
+            let capture_names = match buffer_snapshot {
+                Some(buffer_snapshot)
+                    if stylizer.rules_need_syntax_captures(token.token_type) =>
+                {
+                    syntax_capture_names(buffer_snapshot, &token.range)
+                }
+                _ => Vec::new(),
+            };
+            let style = convert_token(
+                stylizer,
+                theme,
+                token.token_type,
+                token.token_modifiers,
+                &capture_names,
+            )?;
             let style = interner.intern(style);
             Some(SemanticTokenHighlight {
                 range,
@@ -408,17 +425,60 @@ fn buffer_into_editor_highlights<'a, 'b>(
         })
 }
 
+fn syntax_capture_names(
+    buffer_snapshot: &language::BufferSnapshot,
+    range: &Range<text::Anchor>,
+) -> Vec<SharedString> {
+    let start = range.start.to_offset(buffer_snapshot);
+    let end = range.end.to_offset(buffer_snapshot);
+    let captures = buffer_snapshot.captures(start..end, |grammar| {
+        grammar.highlights_config.as_ref().map(|c| &c.query)
+    });
+    let grammars: Vec<_> = captures.grammars().to_vec();
+    let mut names = Vec::new();
+    for capture in captures {
+        if capture.node.start_byte() >= end || capture.node.end_byte() <= start {
+            continue;
+        }
+        if let Some(name) = grammars[capture.grammar_index]
+            .highlights_config
+            .as_ref()
+            .and_then(|config| config.query.capture_names().get(capture.index as usize))
+        {
+            names.push(SharedString::from((*name).to_string()));
+        }
+    }
+    names
+}
+
+fn rule_matches_syntax(rule: &SemanticTokenRule, capture_names: &[SharedString]) -> bool {
+    let matches_any = |patterns: &[String]| {
+        capture_names.iter().any(|name| {
+            patterns.iter().any(|pattern| {
+                name.as_ref() == pattern
+                    || name
+                        .strip_prefix(pattern.as_str())
+                        .is_some_and(|rest| rest.starts_with('.'))
+            })
+        })
+    };
+    (rule.syntax.is_empty() || matches_any(&rule.syntax))
+        && (rule.not_syntax.is_empty() || !matches_any(&rule.not_syntax))
+}
+
 fn convert_token(
     stylizer: &SemanticTokenStylizer,
     theme: &SyntaxTheme,
     token_type: TokenType,
     modifiers: u32,
+    capture_names: &[SharedString],
 ) -> Option<HighlightStyle> {
     let rules = stylizer.rules_for_token(token_type)?;
     let filter = |rule: &&SemanticTokenRule| {
         rule.token_modifiers
             .iter()
             .all(|m| stylizer.has_modifier(modifiers, m))
+            && rule_matches_syntax(rule, capture_names)
     };
     let last = rules.last()?;
     if last.no_style_defined() && filter(&last) {
