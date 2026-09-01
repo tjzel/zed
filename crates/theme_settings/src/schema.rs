@@ -48,11 +48,30 @@ pub fn syntax_overrides(this: &settings::ThemeStyleContent) -> Vec<(String, High
                     font_style: style.font_style.map(|s| s.into_gpui()),
                     font_weight: style.font_weight.map(|w| w.into_gpui()),
                     font_size: style.font_size,
+                    underline: underline_style(style.underline.as_ref()),
                     ..Default::default()
                 },
             )
         })
         .collect()
+}
+
+pub fn underline_style(
+    underline: Option<&settings::UnderlineContent>,
+) -> Option<gpui::UnderlineStyle> {
+    match underline? {
+        settings::UnderlineContent::Enabled(true) => Some(gpui::UnderlineStyle {
+            color: None,
+            thickness: gpui::px(1.),
+            wavy: false,
+        }),
+        settings::UnderlineContent::Enabled(false) => None,
+        settings::UnderlineContent::Color(color) => Some(gpui::UnderlineStyle {
+            color: theme::try_parse_color(color).ok(),
+            thickness: gpui::px(1.),
+            wavy: false,
+        }),
+    }
 }
 
 pub fn status_colors_refinement(colors: &settings::StatusColorsContent) -> StatusColorsRefinement {

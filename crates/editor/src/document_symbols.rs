@@ -908,6 +908,7 @@ mod tests {
                                 font_style: None,
                                 font_weight: None,
                                 font_size: None,
+                                underline: None,
                             },
                         )]),
                         ..ThemeStyleContent::default()
@@ -969,6 +970,7 @@ mod tests {
                                 font_style: None,
                                 font_weight: None,
                                 font_size: None,
+                                underline: None,
                             },
                         )]),
                         ..ThemeStyleContent::default()
