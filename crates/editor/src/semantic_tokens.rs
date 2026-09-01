@@ -477,6 +477,12 @@ fn convert_token(
             },
         );
 
+        overwrite!(
+            highlight.font_size,
+            SemanticTokenRule::font_size,
+            std::convert::identity,
+        );
+
         overwrite!(highlight.underline, SemanticTokenRule::underline, |u| {
             UnderlineStyle {
                 thickness: 1.0.into(),
@@ -2056,6 +2062,7 @@ mod tests {
                             rules: Vec::from([SemanticTokenRule {
                                 token_type: Some("function".to_string()),
                                 foreground_color: Some(red_color),
+                                font_size: Some(0.7),
                                 ..SemanticTokenRule::default()
                             }]),
                         }),
@@ -2085,6 +2092,15 @@ mod tests {
         assert_ne!(
             styles_after_settings_change[0].color, initial_color,
             "Color should have changed from initial"
+        );
+        assert_eq!(
+            styles_after_settings_change[0].font_size,
+            Some(0.7),
+            "Highlight should carry the font size multiplier from settings.json"
+        );
+        assert_eq!(
+            initial_styles[0].font_size, None,
+            "No multiplier should be set before the rule is applied"
         );
     }
 

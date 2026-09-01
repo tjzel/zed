@@ -453,6 +453,7 @@ impl TextSystem {
                 &[FontRun {
                     len: buffer.len(),
                     font_id,
+                    font_size,
                 }],
             )
             .width
@@ -795,8 +796,12 @@ impl WindowTextSystem {
                 };
 
                 let font_id = self.resolve_font(&run.font);
+                let run_font_size = run
+                    .font_size_scale
+                    .map_or(font_size, |scale| font_size * scale);
                 if let Some(font_run) = font_runs.last_mut()
                     && font_id == font_run.font_id
+                    && run_font_size == font_run.font_size
                     && !decoration_changed
                 {
                     font_run.len += run_len_within_line;
@@ -804,6 +809,7 @@ impl WindowTextSystem {
                     font_runs.push(FontRun {
                         len: run_len_within_line,
                         font_id,
+                        font_size: run_font_size,
                     });
                 }
 
@@ -909,8 +915,12 @@ impl WindowTextSystem {
             };
 
             let font_id = self.resolve_font(&run.font);
+            let run_font_size = run
+                .font_size_scale
+                .map_or(font_size, |scale| font_size * scale);
             if let Some(font_run) = font_runs.last_mut()
                 && font_id == font_run.font_id
+                && run_font_size == font_run.font_size
                 && !decoration_changed
             {
                 font_run.len += run.len;
@@ -918,6 +928,7 @@ impl WindowTextSystem {
                 font_runs.push(FontRun {
                     len: run.len,
                     font_id,
+                    font_size: run_font_size,
                 });
             }
         }
@@ -945,6 +956,7 @@ impl WindowTextSystem {
                 &[FontRun {
                     len: buffer.len(),
                     font_id,
+                    font_size,
                 }],
                 None,
             )
@@ -991,8 +1003,12 @@ impl WindowTextSystem {
             };
 
             let font_id = self.resolve_font(&run.font);
+            let run_font_size = run
+                .font_size_scale
+                .map_or(font_size, |scale| font_size * scale);
             if let Some(font_run) = font_runs.last_mut()
                 && font_id == font_run.font_id
+                && run_font_size == font_run.font_size
                 && !decoration_changed
             {
                 font_run.len += run.len;
@@ -1000,6 +1016,7 @@ impl WindowTextSystem {
                 font_runs.push(FontRun {
                     len: run.len,
                     font_id,
+                    font_size: run_font_size,
                 });
             }
         }
@@ -1053,8 +1070,12 @@ impl WindowTextSystem {
             };
 
             let font_id = self.resolve_font(&run.font);
+            let run_font_size = run
+                .font_size_scale
+                .map_or(font_size, |scale| font_size * scale);
             if let Some(font_run) = font_runs.last_mut()
                 && font_id == font_run.font_id
+                && run_font_size == font_run.font_size
                 && !decoration_changed
             {
                 font_run.len += run.len;
@@ -1062,6 +1083,7 @@ impl WindowTextSystem {
                 font_runs.push(FontRun {
                     len: run.len,
                     font_id,
+                    font_size: run_font_size,
                 });
             }
         }
@@ -1224,7 +1246,11 @@ impl Display for FontStyle {
 }
 
 /// A styled run of text, for use in [`crate::TextLayout`].
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+///
+/// `Eq` is implemented manually rather than derived because `font_size_scale`
+/// is an `f32`. As with [`crate::HighlightStyle`], a `NaN` scale would break
+/// reflexivity; scales come from theme configuration and are never `NaN`.
+#[derive(Clone, Debug, PartialEq, Default)]
 pub struct TextRun {
     /// A number of utf8 bytes
     pub len: usize,
@@ -1238,7 +1264,16 @@ pub struct TextRun {
     pub underline: Option<UnderlineStyle>,
     /// The strikethrough style (if any)
     pub strikethrough: Option<StrikethroughStyle>,
+    /// A multiplier applied to the line's font size when shaping this run.
+    ///
+    /// `None` is equivalent to `1.0`: the run is shaped at the size passed to
+    /// [`WindowTextSystem::layout_line`]. A scale is used rather than an
+    /// absolute size so that a run can be described without resolving `rem`
+    /// units, which [`TextStyle::to_run`] cannot do.
+    pub font_size_scale: Option<f32>,
 }
+
+impl Eq for TextRun {}
 
 #[cfg(all(target_os = "macos", test))]
 impl TextRun {

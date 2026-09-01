@@ -1580,6 +1580,7 @@ impl PlatformTextSystem for NoopTextSystem {
         if !glyphs.is_empty() {
             runs.push(ShapedRun {
                 font_id: FontId(0),
+                font_size,
                 glyphs,
             });
         } else {

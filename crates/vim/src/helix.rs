@@ -1298,6 +1298,7 @@ impl Vim {
             }
 
             let run = gpui::TextRun {
+                font_size_scale: None,
                 len: text.len(),
                 font: font.clone(),
                 color: Hsla::default(),
