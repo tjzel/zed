@@ -91,6 +91,12 @@ impl UpdateButton {
             .with_dismiss()
     }
 
+    pub fn update_available(version: impl Into<SharedString>) -> Self {
+        Self::new(IconName::Download, "Rebuild to Update")
+            .tooltip(version)
+            .with_dismiss()
+    }
+
     pub fn errored(error: impl Into<SharedString>) -> Self {
         Self::new(IconName::Warning, "Failed to update Zed")
             .icon_color(Color::Warning)

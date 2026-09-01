@@ -44,6 +44,8 @@ impl std::error::Error for MissingDependencyError {}
 const POLL_INTERVAL: Duration = Duration::from_secs(60 * 60);
 const REMOTE_SERVER_CACHE_LIMIT: usize = 5;
 
+const LOCAL_BUILD_NOTIFY_ONLY: bool = true;
+
 #[cfg(target_os = "linux")]
 fn linux_rsync_install_hint() -> &'static str {
     let os_release = match std::fs::read_to_string("/etc/os-release") {
@@ -120,6 +122,7 @@ pub struct AssetQuery<'a> {
 pub enum AutoUpdateStatus {
     Idle,
     Checking,
+    UpdateAvailable { version: VersionCheckType },
     Downloading { version: VersionCheckType },
     Installing { version: VersionCheckType },
     Updated { version: VersionCheckType },
@@ -131,6 +134,10 @@ impl PartialEq for AutoUpdateStatus {
         match (self, other) {
             (AutoUpdateStatus::Idle, AutoUpdateStatus::Idle) => true,
             (AutoUpdateStatus::Checking, AutoUpdateStatus::Checking) => true,
+            (
+                AutoUpdateStatus::UpdateAvailable { version: v1 },
+                AutoUpdateStatus::UpdateAvailable { version: v2 },
+            ) => v1 == v2,
             (
                 AutoUpdateStatus::Downloading { version: v1 },
                 AutoUpdateStatus::Downloading { version: v2 },
@@ -684,6 +691,16 @@ impl AutoUpdater {
             });
             return Ok(());
         };
+
+        if LOCAL_BUILD_NOTIFY_ONLY {
+            this.update(cx, |this, cx| {
+                this.status = AutoUpdateStatus::UpdateAvailable {
+                    version: newer_version,
+                };
+                cx.notify();
+            });
+            return Ok(());
+        }
 
         this.update(cx, |this, cx| {
             this.status = AutoUpdateStatus::Downloading {
