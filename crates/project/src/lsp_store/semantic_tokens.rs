@@ -630,6 +630,16 @@ impl SemanticTokenStylizer {
             .get(&token_type)
             .map(|v| v.as_slice())
     }
+
+    pub fn rules_need_syntax_captures(&self, token_type: TokenType) -> bool {
+        self.rules_by_token_type
+            .get(&token_type)
+            .is_some_and(|rules| {
+                rules
+                    .iter()
+                    .any(|rule| !rule.syntax.is_empty() || !rule.not_syntax.is_empty())
+            })
+    }
 }
 
 async fn raw_to_buffer_semantic_tokens(
