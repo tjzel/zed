@@ -33,6 +33,7 @@ mod commit_modal;
 pub mod commit_tooltip;
 pub mod commit_view;
 mod conflict_view;
+pub mod diff_file_tree;
 pub mod file_diff_view;
 pub mod file_history_view;
 pub mod git_panel;

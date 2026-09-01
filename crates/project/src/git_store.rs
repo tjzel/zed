@@ -4798,6 +4798,23 @@ impl Repository {
         self.file_history_paginated(path, 0, None)
     }
 
+    pub fn log_commits(
+        &mut self,
+        skip: usize,
+        limit: Option<usize>,
+    ) -> oneshot::Receiver<Result<Vec<git::repository::FileHistoryEntry>>> {
+        self.send_job(None, move |git_repo, _cx| async move {
+            match git_repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend.log_commits(skip, limit).await
+                }
+                RepositoryState::Remote(_) => {
+                    anyhow::bail!("comparing against a commit is not supported in remote projects")
+                }
+            }
+        })
+    }
+
     pub fn file_history_paginated(
         &mut self,
         path: RepoPath,

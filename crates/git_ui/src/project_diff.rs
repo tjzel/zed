@@ -1,7 +1,9 @@
 use crate::{
     conflict_view::ConflictAddon,
+    diff_file_tree::{DiffFileTree, DiffFileTreeEvent, DiffTreeEntry},
     git_panel::{GitPanel, GitPanelAddon, GitStatusEntry},
     git_panel_settings::GitPanelSettings,
+    picker_prompt,
 };
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
@@ -59,6 +61,11 @@ actions!(
         /// Shows the diff between the working directory and your default
         /// branch (typically main or master).
         BranchDiff,
+        /// Shows the diff between the working directory and a commit chosen
+        /// from the commit log.
+        CompareWithCommit,
+        /// Toggles the file tree sidebar in the diff view.
+        ToggleDiffFileTree,
         /// Opens a new agent thread with the branch diff for review.
         ReviewDiff,
         LeaderAndFollower,
@@ -70,6 +77,8 @@ pub struct ProjectDiff {
     multibuffer: Entity<MultiBuffer>,
     branch_diff: Entity<branch_diff::BranchDiff>,
     editor: Entity<SplittableEditor>,
+    file_tree: Entity<DiffFileTree>,
+    show_file_tree: bool,
     buffer_diff_subscriptions: HashMap<Arc<RelPath>, (Entity<BufferDiff>, Subscription)>,
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
@@ -94,6 +103,7 @@ impl ProjectDiff {
     pub(crate) fn register(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
         workspace.register_action(Self::deploy);
         workspace.register_action(Self::deploy_branch_diff);
+        workspace.register_action(Self::deploy_compare_with_commit);
         workspace.register_action(|workspace, _: &Add, window, cx| {
             Self::deploy(workspace, &Diff, window, cx);
         });
@@ -118,30 +128,112 @@ impl ProjectDiff {
         telemetry::event!("Git Branch Diff Opened");
         let project = workspace.project().clone();
 
-        let existing = workspace
-            .items_of_type::<Self>(cx)
-            .find(|item| matches!(item.read(cx).diff_base(cx), DiffBase::Merge { .. }));
-        if let Some(existing) = existing {
-            workspace.activate_item(&existing, true, true, window, cx);
+        let Some(repo) = project.read(cx).git_store().read(cx).active_repository() else {
             return;
-        }
+        };
+        let main_branch = repo.update(cx, |repo, _| repo.default_branch(true));
         let workspace = cx.entity();
         let workspace_weak = workspace.downgrade();
         window
             .spawn(cx, async move |cx| {
-                let this = cx
-                    .update(|window, cx| {
-                        Self::new_with_default_branch(project, workspace.clone(), window, cx)
-                    })?
-                    .await?;
-                workspace
-                    .update_in(cx, |workspace, window, cx| {
+                let main_branch = main_branch
+                    .await??
+                    .context("Could not determine default branch")?;
+                workspace.update_in(cx, |workspace, window, cx| {
+                    let existing = workspace.items_of_type::<Self>(cx).find(|item| {
+                        matches!(
+                            item.read(cx).diff_base(cx),
+                            DiffBase::Merge { base_ref } if *base_ref == main_branch
+                        )
+                    });
+                    if let Some(existing) = existing {
+                        workspace.activate_item(&existing, true, true, window, cx);
+                    } else {
+                        let workspace_entity = cx.entity();
+                        let this = Self::new_with_base_ref(
+                            main_branch,
+                            project,
+                            workspace_entity,
+                            window,
+                            cx,
+                        );
                         workspace.add_item_to_active_pane(Box::new(this), None, true, window, cx);
-                    })
-                    .ok();
+                    }
+                })?;
                 anyhow::Ok(())
             })
             .detach_and_notify_err(workspace_weak, window, cx);
+    }
+
+    fn deploy_compare_with_commit(
+        workspace: &mut Workspace,
+        _: &CompareWithCommit,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        telemetry::event!("Git Compare With Commit Opened");
+        let project = workspace.project().clone();
+        let Some(repo) = project.read(cx).git_store().read(cx).active_repository() else {
+            return;
+        };
+        let workspace = cx.entity();
+        let workspace_weak = workspace.downgrade();
+        let notify_weak = workspace.downgrade();
+        window
+            .spawn(cx, async move |cx| {
+                let commits = cx
+                    .update(|_, cx| repo.update(cx, |repo, _| repo.log_commits(0, Some(500))))?
+                    .await??;
+                anyhow::ensure!(!commits.is_empty(), "No commits found in this repository");
+
+                let options = commits
+                    .iter()
+                    .map(|commit| {
+                        let short_sha = commit.sha.get(0..8).unwrap_or(commit.sha.as_ref());
+                        format!("{short_sha} {} — {}", commit.subject, commit.author_name).into()
+                    })
+                    .collect::<Vec<SharedString>>();
+
+                let selection = cx
+                    .update(|window, cx| {
+                        picker_prompt::prompt(
+                            "Compare working tree against commit",
+                            options,
+                            workspace_weak.clone(),
+                            window,
+                            cx,
+                        )
+                    })?
+                    .await;
+                let Some(selected) = selection.and_then(|ix| commits.get(ix)) else {
+                    return anyhow::Ok(());
+                };
+                let base_ref = selected.sha.clone();
+
+                workspace.update_in(cx, |workspace, window, cx| {
+                    let existing = workspace.items_of_type::<Self>(cx).find(|item| {
+                        matches!(
+                            item.read(cx).diff_base(cx),
+                            DiffBase::Merge { base_ref: existing_ref } if *existing_ref == base_ref
+                        )
+                    });
+                    if let Some(existing) = existing {
+                        workspace.activate_item(&existing, true, true, window, cx);
+                    } else {
+                        let workspace_entity = cx.entity();
+                        let this = Self::new_with_base_ref(
+                            base_ref,
+                            project,
+                            workspace_entity,
+                            window,
+                            cx,
+                        );
+                        workspace.add_item_to_active_pane(Box::new(this), None, true, window, cx);
+                    }
+                })?;
+                anyhow::Ok(())
+            })
+            .detach_and_notify_err(notify_weak, window, cx);
     }
 
     fn review_diff(&mut self, _: &ReviewDiff, window: &mut Window, cx: &mut Context<Self>) {
@@ -307,20 +399,28 @@ impl ProjectDiff {
                 .await??
                 .context("Could not determine default branch")?;
 
-            let branch_diff = cx.new_window_entity(|window, cx| {
-                branch_diff::BranchDiff::new(
-                    DiffBase::Merge {
-                        base_ref: main_branch,
-                    },
-                    project.clone(),
-                    window,
-                    cx,
-                )
-            })?;
-            cx.new_window_entity(|window, cx| {
-                Self::new_impl(branch_diff, project, workspace, window, cx)
+            cx.update(|window, cx| {
+                Self::new_with_base_ref(main_branch, project, workspace, window, cx)
             })
         })
+    }
+
+    fn new_with_base_ref(
+        base_ref: SharedString,
+        project: Entity<Project>,
+        workspace: Entity<Workspace>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Entity<Self> {
+        let branch_diff = cx.new(|cx| {
+            branch_diff::BranchDiff::new(
+                DiffBase::Merge { base_ref },
+                project.clone(),
+                window,
+                cx,
+            )
+        });
+        cx.new(|cx| Self::new_impl(branch_diff, project, workspace, window, cx))
     }
 
     fn new(
@@ -408,6 +508,20 @@ impl ProjectDiff {
             },
         );
 
+        let file_tree = cx.new(DiffFileTree::new);
+        let file_tree_subscription = cx.subscribe_in(
+            &file_tree,
+            window,
+            |this, _, event: &DiffFileTreeEvent, window, cx| match event {
+                DiffFileTreeEvent::OpenEntry { path_key } => {
+                    this.move_to_path(path_key.clone(), window, cx);
+                    let editor_focus = this.editor.read(cx).rhs_editor().focus_handle(cx);
+                    window.focus(&editor_focus, cx);
+                }
+            },
+        );
+        let show_file_tree = matches!(branch_diff.read(cx).diff_base(), DiffBase::Merge { .. });
+
         let mut was_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
         let mut was_collapse_untracked_diff =
             GitPanelSettings::get_global(cx).collapse_untracked_diff;
@@ -441,6 +555,8 @@ impl ProjectDiff {
             branch_diff,
             focus_handle,
             editor,
+            file_tree,
+            show_file_tree,
             multibuffer,
             buffer_diff_subscriptions: Default::default(),
             pending_scroll: None,
@@ -448,7 +564,10 @@ impl ProjectDiff {
             _task: task,
             _subscription: Subscription::join(
                 branch_diff_subscription,
-                Subscription::join(editor_subscription, review_comment_subscription),
+                Subscription::join(
+                    editor_subscription,
+                    Subscription::join(review_comment_subscription, file_tree_subscription),
+                ),
             ),
         }
     }
@@ -632,6 +751,15 @@ impl ProjectDiff {
                 let Some(project_path) = self.active_path(cx) else {
                     return;
                 };
+                if let Some(repo) = self.branch_diff.read(cx).repo()
+                    && let Some(repo_path) = repo
+                        .read(cx)
+                        .project_path_to_repo_path(&project_path, cx)
+                {
+                    self.file_tree.update(cx, |file_tree, cx| {
+                        file_tree.set_active_path(Some(repo_path), cx)
+                    });
+                }
                 self.workspace
                     .update(cx, |workspace, cx| {
                         if let Some(git_panel) = workspace.panel::<GitPanel>(cx) {
@@ -789,6 +917,7 @@ impl ProjectDiff {
                 .map(|(_, path_key)| path_key.clone())
                 .collect::<HashSet<_>>();
 
+            let mut tree_entries = Vec::new();
             if let Some(repo) = repo {
                 let repo = repo.read(cx);
 
@@ -798,9 +927,17 @@ impl ProjectDiff {
                     let path_key =
                         PathKey::with_sort_prefix(sort_prefix, entry.repo_path.as_ref().clone());
                     previous_paths.remove(&path_key);
+                    tree_entries.push(DiffTreeEntry {
+                        path_key: path_key.clone(),
+                        repo_path: entry.repo_path.clone(),
+                        status: entry.file_status,
+                    });
                     path_keys.push(path_key)
                 }
             }
+            this.file_tree.update(cx, |file_tree, cx| {
+                file_tree.set_entries(tree_entries, cx)
+            });
 
             this.editor.update(cx, |editor, cx| {
                 for path in previous_paths {
@@ -1175,7 +1312,28 @@ impl Render for ProjectDiff {
                         ),
                 )
             })
-            .when(!is_empty, |el| el.child(self.editor.clone()))
+            .when(!is_empty, |el| {
+                el.on_action(cx.listener(|this, _: &ToggleDiffFileTree, _, cx| {
+                    this.show_file_tree = !this.show_file_tree;
+                    cx.notify();
+                }))
+                .child(
+                    h_flex()
+                        .size_full()
+                        .when(self.show_file_tree, |el| {
+                            el.child(
+                                div()
+                                    .h_full()
+                                    .w(px(280.))
+                                    .flex_none()
+                                    .border_r_1()
+                                    .border_color(cx.theme().colors().border)
+                                    .child(self.file_tree.clone()),
+                            )
+                        })
+                        .child(div().flex_1().h_full().min_w_0().child(self.editor.clone())),
+                )
+            })
     }
 }
 
