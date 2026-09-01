@@ -1202,6 +1202,21 @@ pub struct HighlightStyleContent {
         deserialize_with = "treat_error_as_none"
     )]
     pub font_size: Option<f32>,
+
+    /// Whether to underline text with this highlight. `true` underlines in the
+    /// text color; a color string (e.g. `"#ff0000"`) underlines in that color.
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "treat_error_as_none"
+    )]
+    pub underline: Option<UnderlineContent>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[serde(untagged)]
+pub enum UnderlineContent {
+    Enabled(bool),
+    Color(String),
 }
 
 impl HighlightStyleContent {
@@ -1211,6 +1226,7 @@ impl HighlightStyleContent {
             && self.font_style.is_none()
             && self.font_weight.is_none()
             && self.font_size.is_none()
+            && self.underline.is_none()
     }
 }
 
