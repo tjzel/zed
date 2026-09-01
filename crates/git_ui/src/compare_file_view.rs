@@ -18,6 +18,58 @@ use workspace::{
     searchable::SearchableItemHandle,
 };
 
+pub fn open_single_file_diff(
+    branch_diff: Entity<project::git_store::branch_diff::BranchDiff>,
+    repo_path: git::repository::RepoPath,
+    base_ref: SharedString,
+    project: Entity<Project>,
+    workspace: gpui::WeakEntity<Workspace>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let Some(load) = branch_diff.update(cx, |branch_diff, cx| {
+        branch_diff.load_single_buffer(&repo_path, cx)
+    }) else {
+        return;
+    };
+    let Some(project_path) = branch_diff
+        .read(cx)
+        .repo()
+        .and_then(|repo| repo.read(cx).repo_path_to_project_path(&repo_path, cx))
+    else {
+        return;
+    };
+    window
+        .spawn(cx, async move |cx| {
+            let (buffer, diff) = load.await?;
+            workspace.update_in(cx, |workspace, window, cx| {
+                let existing = workspace.items_of_type::<CompareFileView>(cx).find(|item| {
+                    let item = item.read(cx);
+                    *item.project_path() == project_path && *item.base_ref() == base_ref
+                });
+                if let Some(existing) = existing {
+                    workspace.activate_item(&existing, true, true, window, cx);
+                    return;
+                }
+                let workspace_entity = cx.entity();
+                let view = cx.new(|cx| {
+                    CompareFileView::new(
+                        buffer,
+                        diff,
+                        project_path,
+                        base_ref,
+                        project,
+                        workspace_entity,
+                        window,
+                        cx,
+                    )
+                });
+                workspace.add_item_to_active_pane(Box::new(view), None, true, window, cx);
+            })
+        })
+        .detach_and_log_err(cx);
+}
+
 pub struct CompareFileView {
     editor: Entity<SplittableEditor>,
     project_path: ProjectPath,

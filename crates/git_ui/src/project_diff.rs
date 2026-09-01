@@ -1,5 +1,4 @@
 use crate::{
-    compare_file_view::CompareFileView,
     conflict_view::ConflictAddon,
     diff_file_tree::{DiffFileTree, DiffFileTreeEvent, DiffTreeEntry},
     git_panel::{GitPanel, GitPanelAddon, GitStatusEntry},
@@ -62,9 +61,10 @@ actions!(
         /// Shows the diff between the working directory and your default
         /// branch (typically main or master).
         BranchDiff,
-        /// Shows the diff between the working directory and a commit chosen
-        /// from the commit log.
-        CompareWithCommit,
+        /// Shows the diff between the working directory and a branch or commit
+        /// chosen from a picker. Branches that are ahead are compared against
+        /// the merge base.
+        CompareWithRef,
         /// Toggles the file tree sidebar in the diff view.
         ToggleDiffFileTree,
         /// Opens a new agent thread with the branch diff for review.
@@ -104,7 +104,7 @@ impl ProjectDiff {
     pub(crate) fn register(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
         workspace.register_action(Self::deploy);
         workspace.register_action(Self::deploy_branch_diff);
-        workspace.register_action(Self::deploy_compare_with_commit);
+        workspace.register_action(Self::deploy_compare_with_ref);
         workspace.register_action(|workspace, _: &Add, window, cx| {
             Self::deploy(workspace, &Diff, window, cx);
         });
@@ -166,13 +166,13 @@ impl ProjectDiff {
             .detach_and_notify_err(workspace_weak, window, cx);
     }
 
-    fn deploy_compare_with_commit(
+    fn deploy_compare_with_ref(
         workspace: &mut Workspace,
-        _: &CompareWithCommit,
+        _: &CompareWithRef,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        telemetry::event!("Git Compare With Commit Opened");
+        telemetry::event!("Git Compare With Ref Opened");
         let project = workspace.project().clone();
         let Some(repo) = project.read(cx).git_store().read(cx).active_repository() else {
             return;
@@ -180,36 +180,12 @@ impl ProjectDiff {
         let workspace = cx.entity();
         let workspace_weak = workspace.downgrade();
         let notify_weak = workspace.downgrade();
+        let picker = pick_compare_base(repo, workspace_weak, window, cx);
         window
             .spawn(cx, async move |cx| {
-                let commits = cx
-                    .update(|_, cx| repo.update(cx, |repo, _| repo.log_commits(0, Some(500))))?
-                    .await??;
-                anyhow::ensure!(!commits.is_empty(), "No commits found in this repository");
-
-                let options = commits
-                    .iter()
-                    .map(|commit| {
-                        let short_sha = commit.sha.get(0..8).unwrap_or(commit.sha.as_ref());
-                        format!("{short_sha} {} — {}", commit.subject, commit.author_name).into()
-                    })
-                    .collect::<Vec<SharedString>>();
-
-                let selection = cx
-                    .update(|window, cx| {
-                        picker_prompt::prompt(
-                            "Compare working tree against commit",
-                            options,
-                            workspace_weak.clone(),
-                            window,
-                            cx,
-                        )
-                    })?
-                    .await;
-                let Some(selected) = selection.and_then(|ix| commits.get(ix)) else {
+                let Some(base_ref) = picker.await? else {
                     return anyhow::Ok(());
                 };
-                let base_ref = selected.sha.clone();
 
                 workspace.update_in(cx, |workspace, window, cx| {
                     let existing = workspace.items_of_type::<Self>(cx).find(|item| {
@@ -531,7 +507,7 @@ impl ProjectDiff {
                 },
             },
         );
-        let show_file_tree = matches!(branch_diff.read(cx).diff_base(), DiffBase::Merge { .. });
+        let show_file_tree = false;
 
         let mut was_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
         let mut was_collapse_untracked_diff =
@@ -610,52 +586,15 @@ impl ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(load) = self
-            .branch_diff
-            .update(cx, |branch_diff, cx| {
-                branch_diff.load_single_buffer(&repo_path, cx)
-            })
-        else {
-            return;
-        };
-        let Some(project_path) = self
-            .branch_diff
-            .read(cx)
-            .repo()
-            .and_then(|repo| repo.read(cx).repo_path_to_project_path(&repo_path, cx))
-        else {
-            return;
-        };
-        let workspace = self.workspace.clone();
-        let project = self.project.clone();
-        cx.spawn_in(window, async move |_, cx| {
-            let (buffer, diff) = load.await?;
-            workspace.update_in(cx, |workspace, window, cx| {
-                let existing = workspace.items_of_type::<CompareFileView>(cx).find(|item| {
-                    let item = item.read(cx);
-                    *item.project_path() == project_path && *item.base_ref() == base_ref
-                });
-                if let Some(existing) = existing {
-                    workspace.activate_item(&existing, true, true, window, cx);
-                    return;
-                }
-                let workspace_entity = cx.entity();
-                let view = cx.new(|cx| {
-                    CompareFileView::new(
-                        buffer,
-                        diff,
-                        project_path,
-                        base_ref,
-                        project,
-                        workspace_entity,
-                        window,
-                        cx,
-                    )
-                });
-                workspace.add_item_to_active_pane(Box::new(view), None, true, window, cx);
-            })
-        })
-        .detach_and_log_err(cx);
+        crate::compare_file_view::open_single_file_diff(
+            self.branch_diff.clone(),
+            repo_path,
+            base_ref,
+            self.project.clone(),
+            self.workspace.clone(),
+            window,
+            cx,
+        );
     }
 
     pub fn move_to_project_path(
@@ -1099,6 +1038,52 @@ impl ProjectDiff {
             })
             .collect()
     }
+}
+
+pub(crate) fn pick_compare_base(
+    repo: Entity<Repository>,
+    workspace: WeakEntity<Workspace>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Task<Result<Option<SharedString>>> {
+    window.spawn(cx, async move |cx| {
+        let branches_rx = cx.update(|_, cx| repo.update(cx, |repo, _| repo.branches()))?;
+        let commits_rx =
+            cx.update(|_, cx| repo.update(cx, |repo, _| repo.log_commits(0, Some(500))))?;
+        let branches = branches_rx.await?.log_err().unwrap_or_default();
+        let commits = commits_rx.await??;
+
+        let mut options = Vec::with_capacity(branches.len() + commits.len());
+        let mut refs: Vec<SharedString> = Vec::with_capacity(branches.len() + commits.len());
+        for branch in &branches {
+            if branch.is_head {
+                continue;
+            }
+            options.push(SharedString::from(format!("branch: {}", branch.name())));
+            refs.push(branch.name().to_string().into());
+        }
+        for commit in &commits {
+            let short_sha = commit.sha.get(0..8).unwrap_or(commit.sha.as_ref());
+            options.push(
+                format!("{short_sha} {} — {}", commit.subject, commit.author_name).into(),
+            );
+            refs.push(commit.sha.clone());
+        }
+        anyhow::ensure!(!options.is_empty(), "No branches or commits found");
+
+        let selection = cx
+            .update(|window, cx| {
+                picker_prompt::prompt(
+                    "Compare working tree against",
+                    options,
+                    workspace,
+                    window,
+                    cx,
+                )
+            })?
+            .await;
+        Ok(selection.and_then(|ix| refs.get(ix).cloned()))
+    })
 }
 
 fn sort_prefix(repo: &Repository, repo_path: &RepoPath, status: FileStatus, cx: &App) -> u64 {

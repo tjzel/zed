@@ -345,6 +345,37 @@ impl BranchDiff {
         output
     }
 
+    pub fn entries(&self, cx: &App) -> Vec<(RepoPath, FileStatus)> {
+        let mut output = Vec::new();
+        let Some(repo) = self.repo.as_ref() else {
+            return output;
+        };
+        let mut seen = HashSet::default();
+        for item in repo.read(cx).cached_status() {
+            seen.insert(item.repo_path.clone());
+            let tree_diff_entry = self
+                .tree_diff
+                .as_ref()
+                .and_then(|tree_diff| tree_diff.entries.get(&item.repo_path));
+            let Some(status) = self.merge_statuses(Some(item.status), tree_diff_entry) else {
+                continue;
+            };
+            if !status.has_changes() {
+                continue;
+            }
+            output.push((item.repo_path.clone(), item.status));
+        }
+        if let Some(tree_diff) = self.tree_diff.as_ref() {
+            for (path, tree_diff_entry) in tree_diff.entries.iter() {
+                if seen.contains(path) {
+                    continue;
+                }
+                output.push((path.clone(), diff_status_to_file_status(tree_diff_entry)));
+            }
+        }
+        output
+    }
+
     pub fn load_single_buffer(
         &mut self,
         repo_path: &RepoPath,
