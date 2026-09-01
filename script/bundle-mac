@@ -84,7 +84,9 @@ fi
 # Generate the licenses first, so they can be baked into the binaries
 script/generate-licenses
 
-rustup target add $target_triple
+if command -v rustup >/dev/null 2>&1; then
+    rustup target add $target_triple
+fi
 
 echo "Compiling zed binaries"
 cargo build ${build_flag} --package zed --package cli --target $target_triple
@@ -236,8 +238,8 @@ function sign_app_binaries() {
         open "$app_path"
     fi
 
-    if [[ "$target_dir" = "debug" ]]; then
-        echo "Debug build detected - skipping DMG creation and signing"
+    if [[ "$target_dir" = "debug" || "$local_install" = true ]]; then
+        echo "Debug build or local install detected - skipping DMG creation and signing"
         if [ "$local_install" = false ]; then
             echo "Created application bundle:"
             echo "$app_path"
