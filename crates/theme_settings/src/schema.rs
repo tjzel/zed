@@ -54,6 +54,7 @@ pub fn syntax_overrides(this: &settings::ThemeStyleContent) -> Vec<(String, High
                         .and_then(|color| theme::try_parse_color(color).ok()),
                     font_style: style.font_style.map(|s| s.into_gpui()),
                     font_weight: style.font_weight.map(|w| w.into_gpui()),
+                    font_size: style.font_size,
                     ..Default::default()
                 },
             )

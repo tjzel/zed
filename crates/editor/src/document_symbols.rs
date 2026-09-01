@@ -930,6 +930,7 @@ mod tests {
                                 background_color: None,
                                 font_style: None,
                                 font_weight: None,
+                                font_size: None,
                             },
                         )]),
                         ..ThemeStyleContent::default()
@@ -990,6 +991,7 @@ mod tests {
                                 background_color: None,
                                 font_style: None,
                                 font_weight: None,
+                                font_size: None,
                             },
                         )]),
                         ..ThemeStyleContent::default()

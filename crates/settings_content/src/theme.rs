@@ -1194,6 +1194,14 @@ pub struct HighlightStyleContent {
         deserialize_with = "treat_error_as_none"
     )]
     pub font_weight: Option<FontWeightContent>,
+
+    /// A multiplier applied to the buffer font size for text with this
+    /// highlight. `1.0` leaves the size unchanged; `0.7` renders it at 70%.
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "treat_error_as_none"
+    )]
+    pub font_size: Option<f32>,
 }
 
 impl HighlightStyleContent {
@@ -1202,6 +1210,7 @@ impl HighlightStyleContent {
             && self.background_color.is_none()
             && self.font_style.is_none()
             && self.font_weight.is_none()
+            && self.font_size.is_none()
     }
 }
 
