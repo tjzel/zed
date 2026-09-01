@@ -740,6 +740,11 @@ impl CosmicTextSystemState {
             } else {
                 runs.push(ShapedRun {
                     font_id,
+                    // TODO: cosmic-text shapes an entire line at a single size,
+                    // so per-run sizes from `FontRun::font_size` are not
+                    // honored here yet. Reporting the line size keeps
+                    // rasterization consistent with what was actually shaped.
+                    font_size,
                     glyphs: vec![shaped_glyph],
                 });
             }
@@ -790,6 +795,7 @@ fn clip_font_runs(font_runs: &[FontRun], range: Range<usize>) -> SmallVec<[FontR
             clipped.push(FontRun {
                 len: end - start,
                 font_id: run.font_id,
+                font_size: run.font_size,
             });
         }
     }
@@ -1080,6 +1086,7 @@ mod tests {
         let runs = [FontRun {
             len: text.len(),
             font_id,
+            font_size: gpui::px(16.),
         }];
         Ok(text_system.layout_line(text, gpui::px(14.0), &runs))
     }
@@ -1189,10 +1196,12 @@ mod tests {
             FontRun {
                 len: "ab\u{001c}\u{05d0}".len(),
                 font_id,
+                font_size: gpui::px(16.),
             },
             FontRun {
                 len: "\u{05d1}".len(),
                 font_id,
+                font_size: gpui::px(16.),
             },
         ];
         let layout = text_system.layout_line(text, gpui::px(14.0), &runs);
@@ -1246,10 +1255,12 @@ mod tests {
             FontRun {
                 len: 3,
                 font_id: fid(1),
+                font_size: gpui::px(16.),
             },
             FontRun {
                 len: 4,
                 font_id: fid(2),
+                font_size: gpui::px(16.),
             },
         ];
 
@@ -1259,11 +1270,13 @@ mod tests {
             &[
                 FontRun {
                     len: 1,
-                    font_id: fid(1)
+                    font_id: fid(1),
+                    font_size: gpui::px(16.),
                 },
                 FontRun {
                     len: 2,
-                    font_id: fid(2)
+                    font_id: fid(2),
+                    font_size: gpui::px(16.),
                 },
             ]
         );
@@ -1271,7 +1284,8 @@ mod tests {
             clip_font_runs(&runs, 3..7).as_slice(),
             &[FontRun {
                 len: 4,
-                font_id: fid(2)
+                font_id: fid(2),
+                font_size: gpui::px(16.),
             }]
         );
         assert!(clip_font_runs(&runs, 5..5).is_empty());

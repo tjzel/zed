@@ -1607,7 +1607,13 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
             }
             glyph_idx += cluster_glyph_count;
         }
-        context.runs.push(ShapedRun { font_id, glyphs });
+        // DirectWrite reports the size it actually shaped this run at, which
+        // already reflects the per-range sizes set during layout.
+        context.runs.push(ShapedRun {
+            font_id,
+            font_size: px(glyphrun.fontEmSize),
+            glyphs,
+        });
         Ok(())
     }
 
