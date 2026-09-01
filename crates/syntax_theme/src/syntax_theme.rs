@@ -101,34 +101,37 @@ impl SyntaxTheme {
         let mut base = Arc::try_unwrap(base).unwrap_or_else(|base| (*base).clone());
 
         for (name, highlight) in user_syntax_styles {
+            let inherited_style = base
+                .highlight_id(&name)
+                .and_then(|id| base.highlights.get(id as usize).copied());
             match base.capture_name_map.entry(name) {
                 Entry::Occupied(entry) => {
                     if let Some(existing_highlight) = base.highlights.get_mut(*entry.get()) {
-                        existing_highlight.color = highlight.color.or(existing_highlight.color);
-                        existing_highlight.font_weight =
-                            highlight.font_weight.or(existing_highlight.font_weight);
-                        existing_highlight.font_style =
-                            highlight.font_style.or(existing_highlight.font_style);
-                        existing_highlight.background_color = highlight
-                            .background_color
-                            .or(existing_highlight.background_color);
-                        existing_highlight.underline =
-                            highlight.underline.or(existing_highlight.underline);
-                        existing_highlight.strikethrough =
-                            highlight.strikethrough.or(existing_highlight.strikethrough);
-                        existing_highlight.fade_out =
-                            highlight.fade_out.or(existing_highlight.fade_out);
+                        overlay_highlight(existing_highlight, &highlight);
                     }
                 }
                 Entry::Vacant(vacant) => {
+                    let mut style = inherited_style.unwrap_or_default();
+                    overlay_highlight(&mut style, &highlight);
                     vacant.insert(base.highlights.len());
-                    base.highlights.push(highlight);
+                    base.highlights.push(style);
                 }
             }
         }
 
         Arc::new(base)
     }
+}
+
+fn overlay_highlight(target: &mut HighlightStyle, over: &HighlightStyle) {
+    target.color = over.color.or(target.color);
+    target.font_weight = over.font_weight.or(target.font_weight);
+    target.font_style = over.font_style.or(target.font_style);
+    target.background_color = over.background_color.or(target.background_color);
+    target.underline = over.underline.or(target.underline);
+    target.strikethrough = over.strikethrough.or(target.strikethrough);
+    target.fade_out = over.fade_out.or(target.fade_out);
+    target.font_size = over.font_size.or(target.font_size);
 }
 
 #[cfg(feature = "bundled-themes")]
@@ -327,6 +330,65 @@ mod tests {
                     HighlightStyle {
                         color: Some(gpui::green()),
                         font_style: Some(FontStyle::Italic),
+                        ..Default::default()
+                    }
+                )
+            ]))
+        );
+    }
+
+    #[test]
+    fn test_merge_into_existing_style_keeps_font_size() {
+        let syntax_theme = SyntaxTheme::merge(
+            Arc::new(SyntaxTheme::new_test([("keyword", gpui::red())])),
+            vec![(
+                "keyword".to_string(),
+                HighlightStyle {
+                    font_size: Some(0.7),
+                    ..Default::default()
+                },
+            )],
+        );
+        assert_eq!(
+            syntax_theme,
+            Arc::new(SyntaxTheme::new_test_styles([(
+                "keyword",
+                HighlightStyle {
+                    color: Some(gpui::red()),
+                    font_size: Some(0.7),
+                    ..Default::default()
+                }
+            )]))
+        );
+    }
+
+    #[test]
+    fn test_merge_new_name_inherits_from_prefix_fallback() {
+        let syntax_theme = SyntaxTheme::merge(
+            Arc::new(SyntaxTheme::new_test([("keyword", gpui::red())])),
+            vec![(
+                "keyword.control".to_string(),
+                HighlightStyle {
+                    font_size: Some(0.7),
+                    ..Default::default()
+                },
+            )],
+        );
+        assert_eq!(
+            syntax_theme,
+            Arc::new(SyntaxTheme::new_test_styles([
+                (
+                    "keyword",
+                    HighlightStyle {
+                        color: Some(gpui::red()),
+                        ..Default::default()
+                    }
+                ),
+                (
+                    "keyword.control",
+                    HighlightStyle {
+                        color: Some(gpui::red()),
+                        font_size: Some(0.7),
                         ..Default::default()
                     }
                 )
