@@ -950,6 +950,11 @@
     //
     // Default: false
     "starts_open": false,
+    // Whether clicking an entry opens a single-file diff view for that file
+    // instead of the multi-file project diff.
+    //
+    // Default: false
+    "single_file_diff": false,
     // Whether to show a badge on the git panel icon with the count of uncommitted changes.
     //
     // Default: false

@@ -638,6 +638,12 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: false
     pub starts_open: Option<bool>,
+
+    /// Whether clicking an entry opens a single-file diff view for that file
+    /// instead of the multi-file project diff.
+    ///
+    /// Default: false
+    pub single_file_diff: Option<bool>,
 }
 
 #[derive(

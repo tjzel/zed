@@ -70,6 +70,55 @@ pub fn open_single_file_diff(
         .detach_and_log_err(cx);
 }
 
+pub fn open_uncommitted_file_diff(
+    project_path: ProjectPath,
+    project: Entity<Project>,
+    workspace: gpui::WeakEntity<Workspace>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let open_buffer = project.update(cx, |project, cx| {
+        project.open_buffer(project_path.clone(), cx)
+    });
+    window
+        .spawn(cx, async move |cx| {
+            let buffer = open_buffer.await?;
+            let diff = cx
+                .update(|_, cx| {
+                    project.update(cx, |project, cx| {
+                        project.open_uncommitted_diff(buffer.clone(), cx)
+                    })
+                })?
+                .await?;
+            let base_ref = SharedString::from("HEAD");
+            workspace.update_in(cx, |workspace, window, cx| {
+                let existing = workspace.items_of_type::<CompareFileView>(cx).find(|item| {
+                    let item = item.read(cx);
+                    *item.project_path() == project_path && *item.base_ref() == base_ref
+                });
+                if let Some(existing) = existing {
+                    workspace.activate_item(&existing, true, true, window, cx);
+                    return;
+                }
+                let workspace_entity = cx.entity();
+                let view = cx.new(|cx| {
+                    CompareFileView::new(
+                        buffer,
+                        diff,
+                        project_path,
+                        base_ref,
+                        project,
+                        workspace_entity,
+                        window,
+                        cx,
+                    )
+                });
+                workspace.add_item_to_active_pane(Box::new(view), None, true, window, cx);
+            })
+        })
+        .detach_and_log_err(cx);
+}
+
 pub struct CompareFileView {
     editor: Entity<SplittableEditor>,
     project_path: ProjectPath,

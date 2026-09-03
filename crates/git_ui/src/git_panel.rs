@@ -1285,6 +1285,21 @@ impl GitPanel {
             let workspace = self.workspace.upgrade()?;
             let git_repo = self.active_repository.as_ref()?;
 
+            if GitPanelSettings::get_global(cx).single_file_diff {
+                let project_path = git_repo
+                    .read(cx)
+                    .repo_path_to_project_path(&entry.repo_path, cx)?;
+                crate::compare_file_view::open_uncommitted_file_diff(
+                    project_path,
+                    self.project.clone(),
+                    self.workspace.clone(),
+                    window,
+                    cx,
+                );
+                self.focus_handle.focus(window, cx);
+                return Some(());
+            }
+
             if let Some(project_diff) = workspace.read(cx).active_item_as::<ProjectDiff>(cx)
                 && let Some(project_path) = project_diff.read(cx).active_path(cx)
                 && Some(&entry.repo_path)
