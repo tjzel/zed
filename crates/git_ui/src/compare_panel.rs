@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use anyhow::Result;
 use gpui::{
     App, AsyncWindowContext, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
@@ -6,6 +8,7 @@ use gpui::{
 use multi_buffer::PathKey;
 use project::Project;
 use project::git_store::branch_diff::{BranchDiff, BranchDiffEvent, DiffBase};
+use settings::Settings as _;
 use ui::{Button, ButtonCommon as _, Clickable as _, Tooltip, prelude::*};
 use workspace::Workspace;
 use workspace::dock::{DockPosition, Panel, PanelEvent};
@@ -28,13 +31,29 @@ pub fn register(workspace: &mut Workspace) {
     });
 }
 
+#[derive(Debug, Clone, PartialEq, settings::RegisterSetting)]
+pub struct ComparePanelSettings {
+    pub dock: DockPosition,
+    pub default_width: Pixels,
+}
+
+impl settings::Settings for ComparePanelSettings {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
+        let compare_panel = content.compare_panel.clone().unwrap();
+        Self {
+            dock: compare_panel.dock.unwrap().into(),
+            default_width: px(compare_panel.default_width.unwrap()),
+        }
+    }
+}
+
 pub struct ComparePanel {
     project: Entity<Project>,
     workspace: WeakEntity<Workspace>,
     branch_diff: Option<Entity<BranchDiff>>,
     base_ref: Option<SharedString>,
     file_tree: Entity<DiffFileTree>,
-    position: DockPosition,
+    fs: Arc<dyn fs::Fs>,
     focus_handle: FocusHandle,
     _tree_subscription: Subscription,
     _branch_diff_subscription: Option<Subscription>,
@@ -70,12 +89,12 @@ impl ComparePanel {
         );
 
         Self {
+            fs: project.read(cx).fs().clone(),
             project,
             workspace,
             branch_diff: None,
             base_ref: None,
             file_tree,
-            position: DockPosition::Right,
             focus_handle: cx.focus_handle(),
             _tree_subscription: tree_subscription,
             _branch_diff_subscription: None,
@@ -184,8 +203,8 @@ impl Panel for ComparePanel {
         "ComparePanel"
     }
 
-    fn position(&self, _: &Window, _: &App) -> DockPosition {
-        self.position
+    fn position(&self, _: &Window, cx: &App) -> DockPosition {
+        ComparePanelSettings::get_global(cx).dock
     }
 
     fn position_is_valid(&self, position: DockPosition) -> bool {
@@ -193,12 +212,13 @@ impl Panel for ComparePanel {
     }
 
     fn set_position(&mut self, position: DockPosition, _: &mut Window, cx: &mut Context<Self>) {
-        self.position = position;
-        cx.notify();
+        settings::update_settings_file(self.fs.clone(), cx, move |settings, _| {
+            settings.compare_panel.get_or_insert_default().dock = Some(position.into())
+        });
     }
 
-    fn default_size(&self, _: &Window, _: &App) -> Pixels {
-        px(320.)
+    fn default_size(&self, _: &Window, cx: &App) -> Pixels {
+        ComparePanelSettings::get_global(cx).default_width
     }
 
     fn icon(&self, _: &Window, _: &App) -> Option<ui::IconName> {

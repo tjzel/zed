@@ -106,6 +106,9 @@ pub struct SettingsContent {
 
     pub git_panel: Option<GitPanelSettingsContent>,
 
+    /// Configuration for the compare panel.
+    pub compare_panel: Option<ComparePanelSettingsContent>,
+
     pub tabs: Option<ItemSettingsContent>,
     pub tab_bar: Option<TabBarSettingsContent>,
     pub status_bar: Option<StatusBarSettingsContent>,
@@ -564,6 +567,20 @@ pub struct CallSettingsContent {
     ///
     /// Default: false
     pub share_on_join: Option<bool>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
+pub struct ComparePanelSettingsContent {
+    /// Where to dock the panel.
+    ///
+    /// Default: right
+    pub dock: Option<DockPosition>,
+    /// Default width of the panel in pixels.
+    ///
+    /// Default: 320
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
+    pub default_width: Option<f32>,
 }
 
 #[with_fallible_options]
