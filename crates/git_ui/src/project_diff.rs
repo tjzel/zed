@@ -1,6 +1,6 @@
 use crate::{
     conflict_view::ConflictAddon,
-    diff_file_tree::{DiffFileTree, DiffFileTreeEvent, DiffTreeEntry},
+    diff_file_tree::{DiffFileTree, DiffFileTreeEvent, DiffTreeEntry, OpenTarget},
     git_panel::{GitPanel, GitPanelAddon, GitStatusEntry},
     git_panel_settings::GitPanelSettings,
     picker_prompt,
@@ -494,17 +494,42 @@ impl ProjectDiff {
                 DiffFileTreeEvent::OpenEntry {
                     path_key,
                     repo_path,
-                } => match this.diff_base(cx) {
-                    DiffBase::Merge { base_ref } => {
-                        let base_ref = base_ref.clone();
-                        this.open_compare_file_view(repo_path.clone(), base_ref, window, cx);
+                    target,
+                } => {
+                    let target = match target {
+                        OpenTarget::Default => match this.diff_base(cx) {
+                            DiffBase::Merge { .. } => OpenTarget::SingleBuffer,
+                            DiffBase::Head => OpenTarget::MultiBuffer,
+                        },
+                        target => *target,
+                    };
+                    match target {
+                        OpenTarget::File => {
+                            if let Some(project_path) = this.repo_path_to_project_path(repo_path, cx)
+                            {
+                                this.workspace
+                                    .update(cx, |workspace, cx| {
+                                        workspace
+                                            .open_path(project_path, None, true, window, cx)
+                                            .detach_and_log_err(cx);
+                                    })
+                                    .ok();
+                            }
+                        }
+                        OpenTarget::SingleBuffer => {
+                            let base_ref = match this.diff_base(cx) {
+                                DiffBase::Merge { base_ref } => base_ref.clone(),
+                                DiffBase::Head => SharedString::from("HEAD"),
+                            };
+                            this.open_compare_file_view(repo_path.clone(), base_ref, window, cx);
+                        }
+                        OpenTarget::MultiBuffer | OpenTarget::Default => {
+                            this.move_to_path(path_key.clone(), window, cx);
+                            let editor_focus = this.editor.read(cx).rhs_editor().focus_handle(cx);
+                            window.focus(&editor_focus, cx);
+                        }
                     }
-                    DiffBase::Head => {
-                        this.move_to_path(path_key.clone(), window, cx);
-                        let editor_focus = this.editor.read(cx).rhs_editor().focus_handle(cx);
-                        window.focus(&editor_focus, cx);
-                    }
-                },
+                }
             },
         );
         let show_file_tree = false;
@@ -577,6 +602,13 @@ impl ProjectDiff {
         let path_key = PathKey::with_sort_prefix(sort_prefix, entry.repo_path.as_ref().clone());
 
         self.move_to_path(path_key, window, cx)
+    }
+
+    fn repo_path_to_project_path(&self, repo_path: &RepoPath, cx: &App) -> Option<ProjectPath> {
+        self.branch_diff
+            .read(cx)
+            .repo()
+            .and_then(|repo| repo.read(cx).repo_path_to_project_path(repo_path, cx))
     }
 
     fn open_compare_file_view(
@@ -1038,6 +1070,57 @@ impl ProjectDiff {
             })
             .collect()
     }
+}
+
+/// Opens (or activates) the multibuffer diff for `base_ref`, scrolled to
+/// `project_path`.
+pub(crate) fn open_multibuffer_diff(
+    base_ref: SharedString,
+    project_path: ProjectPath,
+    project: Entity<Project>,
+    workspace: WeakEntity<Workspace>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    window
+        .spawn(cx, async move |cx| {
+            workspace.update_in(cx, |workspace, window, cx| {
+                let existing = workspace.items_of_type::<ProjectDiff>(cx).find(|item| {
+                    matches!(
+                        item.read(cx).diff_base(cx),
+                        DiffBase::Merge { base_ref: existing } if *existing == base_ref
+                    )
+                });
+                let diff = match existing {
+                    Some(existing) => {
+                        workspace.activate_item(&existing, true, true, window, cx);
+                        existing
+                    }
+                    None => {
+                        let workspace_entity = cx.entity();
+                        let diff = ProjectDiff::new_with_base_ref(
+                            base_ref,
+                            project,
+                            workspace_entity,
+                            window,
+                            cx,
+                        );
+                        workspace.add_item_to_active_pane(
+                            Box::new(diff.clone()),
+                            None,
+                            true,
+                            window,
+                            cx,
+                        );
+                        diff
+                    }
+                };
+                diff.update(cx, |diff, cx| {
+                    diff.move_to_project_path(&project_path, window, cx);
+                });
+            })
+        })
+        .detach_and_log_err(cx);
 }
 
 pub(crate) fn pick_compare_base(

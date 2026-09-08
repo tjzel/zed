@@ -6,11 +6,12 @@ use file_icons::FileIcons;
 use git::repository::RepoPath;
 use git::status::FileStatus;
 use gpui::{
-    AnyElement, App, Context, EventEmitter, FocusHandle, Focusable, ScrollStrategy, SharedString,
-    UniformListScrollHandle, Window, uniform_list,
+    AnyElement, App, Context, Corner, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
+    MouseDownEvent, Point, ScrollStrategy, SharedString, Subscription, UniformListScrollHandle,
+    Window, anchored, deferred, uniform_list,
 };
 use multi_buffer::PathKey;
-use ui::{ListItem, prelude::*};
+use ui::{ContextMenu, ListItem, prelude::*};
 
 use crate::git_status_icon;
 
@@ -22,6 +23,7 @@ pub struct DiffFileTree {
     active_path: Option<RepoPath>,
     focus_handle: FocusHandle,
     scroll_handle: UniformListScrollHandle,
+    context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
 }
 
 #[derive(Clone)]
@@ -35,7 +37,20 @@ pub enum DiffFileTreeEvent {
     OpenEntry {
         path_key: PathKey,
         repo_path: RepoPath,
+        target: OpenTarget,
     },
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum OpenTarget {
+    /// Activated by clicking the entry; the consumer picks its own default.
+    Default,
+    /// The file itself, in a regular editor.
+    File,
+    /// A diff of just this file.
+    SingleBuffer,
+    /// The multibuffer containing every changed file, scrolled to this one.
+    MultiBuffer,
 }
 
 impl EventEmitter<DiffFileTreeEvent> for DiffFileTree {}
@@ -71,6 +86,7 @@ impl DiffFileTree {
             active_path: None,
             focus_handle: cx.focus_handle(),
             scroll_handle: UniformListScrollHandle::new(),
+            context_menu: None,
         }
     }
 
@@ -247,14 +263,29 @@ impl DiffFileTree {
             .indent_level(depth + 1)
             .indent_step_size(px(12.))
             .toggle_state(is_active)
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.active_path = Some(repo_path.clone());
-                cx.emit(DiffFileTreeEvent::OpenEntry {
-                    path_key: path_key.clone(),
-                    repo_path: repo_path.clone(),
-                });
-                cx.notify();
+            .on_click(cx.listener({
+                let path_key = path_key.clone();
+                let repo_path = repo_path.clone();
+                move |this, _, _, cx| {
+                    this.open_entry(
+                        path_key.clone(),
+                        repo_path.clone(),
+                        OpenTarget::Default,
+                        cx,
+                    );
+                }
             }))
+            .on_secondary_mouse_down(cx.listener(
+                move |this, event: &MouseDownEvent, window, cx| {
+                    this.deploy_entry_context_menu(
+                        path_key.clone(),
+                        repo_path.clone(),
+                        event.position,
+                        window,
+                        cx,
+                    );
+                },
+            ))
             .child(
                 h_flex()
                     .gap_1()
@@ -271,6 +302,65 @@ impl DiffFileTree {
                     ),
             )
             .into_any_element()
+    }
+
+    fn open_entry(
+        &mut self,
+        path_key: PathKey,
+        repo_path: RepoPath,
+        target: OpenTarget,
+        cx: &mut Context<Self>,
+    ) {
+        self.active_path = Some(repo_path.clone());
+        cx.emit(DiffFileTreeEvent::OpenEntry {
+            path_key,
+            repo_path,
+            target,
+        });
+        cx.notify();
+    }
+
+    fn deploy_entry_context_menu(
+        &mut self,
+        path_key: PathKey,
+        repo_path: RepoPath,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let this = cx.entity().downgrade();
+        let context_menu = ContextMenu::build(window, cx, move |context_menu, _, _| {
+            let entry = |context_menu: ContextMenu, label: &'static str, target: OpenTarget| {
+                let this = this.clone();
+                let path_key = path_key.clone();
+                let repo_path = repo_path.clone();
+                context_menu.entry(label, None, move |_, cx| {
+                    this.update(cx, |this, cx| {
+                        this.open_entry(path_key.clone(), repo_path.clone(), target, cx);
+                    })
+                    .ok();
+                })
+            };
+            let context_menu = entry(context_menu, "Open File", OpenTarget::File);
+            let context_menu = entry(context_menu, "Open as Singlebuffer", OpenTarget::SingleBuffer);
+            entry(context_menu, "Open as Multibuffer", OpenTarget::MultiBuffer)
+        });
+
+        let subscription = cx.subscribe_in(
+            &context_menu,
+            window,
+            |this, _, _: &DismissEvent, window, cx| {
+                if this.context_menu.as_ref().is_some_and(|context_menu| {
+                    context_menu.0.focus_handle(cx).contains_focused(window, cx)
+                }) {
+                    cx.focus_self(window);
+                }
+                this.context_menu.take();
+                cx.notify();
+            },
+        );
+        self.context_menu = Some((context_menu, position, subscription));
+        cx.notify();
     }
 
     fn status_label_color(status: FileStatus) -> Color {
@@ -327,5 +417,14 @@ impl Render for DiffFileTree {
                 .flex_grow()
                 .track_scroll(&self.scroll_handle),
             )
+            .children(self.context_menu.as_ref().map(|(menu, position, _)| {
+                deferred(
+                    anchored()
+                        .position(*position)
+                        .anchor(Corner::TopLeft)
+                        .child(menu.clone()),
+                )
+                .with_priority(1)
+            }))
     }
 }

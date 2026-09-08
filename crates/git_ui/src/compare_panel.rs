@@ -14,7 +14,7 @@ use workspace::Workspace;
 use workspace::dock::{DockPosition, Panel, PanelEvent};
 
 use crate::compare_file_view::open_single_file_diff;
-use crate::diff_file_tree::{DiffFileTree, DiffFileTreeEvent, DiffTreeEntry};
+use crate::diff_file_tree::{DiffFileTree, DiffFileTreeEvent, DiffTreeEntry, OpenTarget};
 use crate::project_diff::pick_compare_base;
 
 actions!(
@@ -82,8 +82,10 @@ impl ComparePanel {
             &file_tree,
             window,
             |this, _, event: &DiffFileTreeEvent, window, cx| match event {
-                DiffFileTreeEvent::OpenEntry { repo_path, .. } => {
-                    this.open_file(repo_path.clone(), window, cx);
+                DiffFileTreeEvent::OpenEntry {
+                    repo_path, target, ..
+                } => {
+                    this.open_entry(repo_path.clone(), *target, window, cx);
                 }
             },
         );
@@ -101,9 +103,10 @@ impl ComparePanel {
         }
     }
 
-    fn open_file(
+    fn open_entry(
         &mut self,
         repo_path: git::repository::RepoPath,
+        target: OpenTarget,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -112,15 +115,56 @@ impl ComparePanel {
         else {
             return;
         };
-        open_single_file_diff(
-            branch_diff,
-            repo_path,
-            base_ref,
-            self.project.clone(),
-            self.workspace.clone(),
-            window,
-            cx,
-        );
+        match target {
+            OpenTarget::Default | OpenTarget::SingleBuffer => {
+                open_single_file_diff(
+                    branch_diff,
+                    repo_path,
+                    base_ref,
+                    self.project.clone(),
+                    self.workspace.clone(),
+                    window,
+                    cx,
+                );
+            }
+            OpenTarget::File => {
+                let Some(project_path) = self.repo_path_to_project_path(&repo_path, cx) else {
+                    return;
+                };
+                self.workspace
+                    .update(cx, |workspace, cx| {
+                        workspace
+                            .open_path(project_path, None, true, window, cx)
+                            .detach_and_log_err(cx);
+                    })
+                    .ok();
+            }
+            OpenTarget::MultiBuffer => {
+                let Some(project_path) = self.repo_path_to_project_path(&repo_path, cx) else {
+                    return;
+                };
+                crate::project_diff::open_multibuffer_diff(
+                    base_ref,
+                    project_path,
+                    self.project.clone(),
+                    self.workspace.clone(),
+                    window,
+                    cx,
+                );
+            }
+        }
+    }
+
+    fn repo_path_to_project_path(
+        &self,
+        repo_path: &git::repository::RepoPath,
+        cx: &App,
+    ) -> Option<project::ProjectPath> {
+        self.branch_diff
+            .as_ref()?
+            .read(cx)
+            .repo()
+            .and_then(|repo| repo.read(cx).repo_path_to_project_path(repo_path, cx))
     }
 
     fn choose_base(&mut self, window: &mut Window, cx: &mut Context<Self>) {
