@@ -7017,6 +7017,23 @@ impl Repository {
         })
     }
 
+    pub fn log_commits(
+        &mut self,
+        skip: usize,
+        limit: Option<usize>,
+    ) -> oneshot::Receiver<Result<Vec<git::repository::CommitSummary>>> {
+        self.send_job("log_commits", None, move |git_repo, _cx| async move {
+            match git_repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                    backend.log_commits(skip, limit).await
+                }
+                RepositoryState::Remote(_) => {
+                    anyhow::bail!("comparing against a commit is not supported in remote projects")
+                }
+            }
+        })
+    }
+
     pub fn file_history_changed_files(
         &mut self,
         paths: Vec<RepoPath>,

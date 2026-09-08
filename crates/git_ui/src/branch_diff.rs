@@ -2,7 +2,7 @@ use crate::{
     branch_picker,
     diff_multibuffer::DiffMultibuffer,
     project_diff::{
-        self, CompareWithBranch, DeployBranchDiff, ProjectDiff, ReviewDiff,
+        self, CompareWithBranch, CompareWithCommit, DeployBranchDiff, ProjectDiff, ReviewDiff,
         render_send_review_to_agent_button,
     },
 };
@@ -74,6 +74,7 @@ impl BranchDiff {
             Self::deploy_branch_diff(workspace, window, cx)
         });
         workspace.register_action(Self::compare_with_branch);
+        workspace.register_action(Self::compare_with_commit);
         workspace::register_serializable_item::<Self>(cx);
     }
 
@@ -133,6 +134,67 @@ impl BranchDiff {
                 anyhow::Ok(())
             })
             .detach_and_notify_err(workspace_weak, window, cx);
+    }
+
+    fn compare_with_commit(
+        workspace: &mut Workspace,
+        _: &CompareWithCommit,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        let project = workspace.project().clone();
+        let workspace_handle = cx.entity();
+        let notify_handle = workspace_handle.downgrade();
+        let Some(repository) = project.read(cx).active_repository(cx) else {
+            window
+                .spawn(cx, async |_cx| {
+                    let result: Result<()> = Err(anyhow!("No active repository"));
+                    result
+                })
+                .detach_and_notify_err(notify_handle, window, cx);
+            return;
+        };
+        let commits = repository.update(cx, |repository, _| repository.log_commits(0, Some(500)));
+        window
+            .spawn(cx, async move |cx| {
+                let commits = commits.await??;
+                anyhow::ensure!(!commits.is_empty(), "No commits found in this repository");
+
+                let options = commits
+                    .iter()
+                    .map(|commit| {
+                        let short_sha = commit.sha.get(0..8).unwrap_or(commit.sha.as_ref());
+                        SharedString::from(format!(
+                            "{short_sha} {} — {}",
+                            commit.subject, commit.author_name
+                        ))
+                    })
+                    .collect::<Vec<_>>();
+
+                let selection = cx
+                    .update(|window, cx| {
+                        crate::picker_prompt::prompt(
+                            "Compare working tree against commit",
+                            options,
+                            workspace_handle.downgrade(),
+                            window,
+                            cx,
+                        )
+                    })?
+                    .await;
+                let Some(commit) = selection.and_then(|index| commits.get(index)) else {
+                    return anyhow::Ok(());
+                };
+
+                let base_ref = commit.sha.clone();
+                workspace_handle.update_in(cx, |workspace, window, cx| {
+                    Self::deploy_branch_diff_with_base_ref(
+                        workspace, project, repository, base_ref, None, window, cx,
+                    );
+                })?;
+                anyhow::Ok(())
+            })
+            .detach_and_notify_err(notify_handle, window, cx);
     }
 
     fn compare_with_branch(

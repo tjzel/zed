@@ -892,6 +892,13 @@ pub trait GitRepository: Send + Sync {
         revision: Oid,
     ) -> BoxFuture<'_, Result<crate::blame::Blame>>;
 
+    /// Returns commits reachable from HEAD, newest first.
+    fn log_commits(
+        &self,
+        skip: usize,
+        limit: Option<usize>,
+    ) -> BoxFuture<'_, Result<Vec<CommitSummary>>>;
+
     /// Returns the absolute path to the repository. For worktrees, this will be the path to the
     /// worktree's gitdir within the main repository (typically `.git/worktrees/<name>`).
     fn path(&self) -> PathBuf;
@@ -2416,6 +2423,63 @@ impl GitRepository for RealGitRepository {
             .spawn(async move {
                 let git = git?;
                 crate::blame::Blame::for_path_at_revision(&git, &path, revision).await
+            })
+            .boxed()
+    }
+
+    fn log_commits(
+        &self,
+        skip: usize,
+        limit: Option<usize>,
+    ) -> BoxFuture<'_, Result<Vec<CommitSummary>>> {
+        let git_binary = self.git_binary();
+        self.executor
+            .spawn(async move {
+                let git = git_binary;
+                let commit_delimiter =
+                    concat!("<<COMMIT_END-", "3f8a9c2e-7d4b-4e1a-9f6c-8b5d2a1e4c3f>>");
+                let format_string =
+                    format!("--pretty=format:%H%x00%s%x00%at%x00%an%x00%P{commit_delimiter}");
+
+                let mut args = vec!["log", &format_string];
+                let skip_str;
+                let limit_str;
+                if skip > 0 {
+                    skip_str = skip.to_string();
+                    args.push("--skip");
+                    args.push(&skip_str);
+                }
+                if let Some(limit) = limit {
+                    limit_str = limit.to_string();
+                    args.push("-n");
+                    args.push(&limit_str);
+                }
+
+                let output = git.build_command(&args).output().await?;
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    bail!("git log failed: {stderr}");
+                }
+
+                let stdout = std::str::from_utf8(&output.stdout)?;
+                let mut entries = Vec::new();
+                for commit_block in stdout.split(commit_delimiter) {
+                    let commit_block = commit_block.trim();
+                    if commit_block.is_empty() {
+                        continue;
+                    }
+                    let fields: Vec<&str> = commit_block.split('\0').collect();
+                    if fields.len() >= 5 {
+                        entries.push(CommitSummary {
+                            sha: fields[0].trim().to_string().into(),
+                            subject: fields[1].trim().to_string().into(),
+                            commit_timestamp: fields[2].trim().parse().unwrap_or(0),
+                            author_name: fields[3].trim().to_string().into(),
+                            has_parent: !fields[4].trim().is_empty(),
+                        });
+                    }
+                }
+                Ok(entries)
             })
             .boxed()
     }
