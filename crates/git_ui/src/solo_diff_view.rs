@@ -46,6 +46,10 @@ pub struct SoloDiffView {
     editor: Entity<SplittableEditor>,
     workspace: WeakEntity<Workspace>,
     showing_full_file: bool,
+    /// The ref this file is compared against, when it is not the working
+    /// tree's own HEAD. Tabs are deduplicated per base, and the git actions in
+    /// the toolbar are meaningless against a non-HEAD base.
+    base_ref: Option<SharedString>,
     _settings_subscription: Subscription,
 }
 
@@ -64,7 +68,7 @@ impl SoloDiffView {
         let existing = workspace_entity
             .read(cx)
             .items_of_type::<SoloDiffView>(cx)
-            .find(|item| item.read(cx).matches(&repository, &entry.repo_path, cx));
+            .find(|item| item.read(cx).matches(&repository, &entry.repo_path, None, cx));
         if let Some(existing) = existing {
             workspace_entity.update(cx, |workspace, cx| {
                 workspace.activate_item(&existing, true, true, window, cx);
@@ -107,11 +111,87 @@ impl SoloDiffView {
                         buffer,
                         diff,
                         workspace_handle,
+                        None,
                         window,
                         cx,
                     )
                 });
 
+                workspace.add_item_to_active_pane(Box::new(view.clone()), None, true, window, cx);
+                view
+            })
+        })
+    }
+
+    /// Opens a diff of one file against `base_ref` rather than the working
+    /// tree's HEAD. `base_oid` is the file's blob in that base, as reported by
+    /// the diff base's tree.
+    pub fn open_or_focus_with_base(
+        repo_path: RepoPath,
+        repository: Entity<Repository>,
+        workspace: WeakEntity<Workspace>,
+        base_ref: SharedString,
+        base_oid: Option<git::Oid>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Task<Result<Entity<Self>>> {
+        let Some(workspace_entity) = workspace.upgrade() else {
+            return Task::ready(Err(anyhow::anyhow!("workspace was dropped")));
+        };
+
+        let existing = workspace_entity
+            .read(cx)
+            .items_of_type::<SoloDiffView>(cx)
+            .find(|item| {
+                item.read(cx)
+                    .matches(&repository, &repo_path, Some(&base_ref), cx)
+            });
+        if let Some(existing) = existing {
+            workspace_entity.update(cx, |workspace, cx| {
+                workspace.activate_item(&existing, true, true, window, cx);
+            });
+            existing.focus_handle(cx).focus(window, cx);
+            return Task::ready(Ok(existing));
+        }
+
+        let Some(project_path) = repository
+            .read(cx)
+            .repo_path_to_project_path(&repo_path, cx)
+        else {
+            return Task::ready(Err(anyhow::anyhow!(
+                "could not resolve repository path {:?}",
+                repo_path
+            )));
+        };
+
+        let project = workspace_entity.read(cx).project().clone();
+        window.spawn(cx, async move |cx| {
+            let buffer = project
+                .update(cx, |project, cx| project.open_buffer(project_path, cx))
+                .await?;
+            let diff = project
+                .update(cx, |project, cx| {
+                    project.git_store().update(cx, |git_store, cx| {
+                        git_store.open_diff_since(base_oid, buffer.clone(), repository.clone(), cx)
+                    })
+                })
+                .await?;
+
+            workspace_entity.update_in(cx, |workspace, window, cx| {
+                let workspace_handle = cx.entity();
+                let view = cx.new(|cx| {
+                    Self::new(
+                        project,
+                        repository,
+                        repo_path,
+                        buffer,
+                        diff,
+                        workspace_handle,
+                        Some(base_ref),
+                        window,
+                        cx,
+                    )
+                });
                 workspace.add_item_to_active_pane(Box::new(view.clone()), None, true, window, cx);
                 view
             })
@@ -125,6 +205,7 @@ impl SoloDiffView {
         buffer: Entity<Buffer>,
         diff: Entity<buffer_diff::BufferDiff>,
         workspace: Entity<Workspace>,
+        base_ref: Option<SharedString>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -181,6 +262,7 @@ impl SoloDiffView {
             editor,
             workspace: workspace.downgrade(),
             showing_full_file,
+            base_ref,
             _settings_subscription: settings_subscription,
         }
     }
@@ -261,8 +343,16 @@ impl SoloDiffView {
         cx.notify();
     }
 
-    fn matches(&self, repository: &Entity<Repository>, repo_path: &RepoPath, cx: &App) -> bool {
-        self.repository_id == repository.read(cx).id && &self.repo_path == repo_path
+    fn matches(
+        &self,
+        repository: &Entity<Repository>,
+        repo_path: &RepoPath,
+        base_ref: Option<&SharedString>,
+        cx: &App,
+    ) -> bool {
+        self.repository_id == repository.read(cx).id
+            && &self.repo_path == repo_path
+            && self.base_ref.as_ref() == base_ref
     }
 
     fn button_states(&self, cx: &App) -> SoloDiffButtonStates {
@@ -317,14 +407,17 @@ impl SoloDiffView {
             .map(|entry| entry.status.staging())
             .unwrap_or(StageStatus::Unstaged);
 
+        // Staging and restoring act on the index relative to HEAD, so they do
+        // not apply when the file is being compared against another ref.
+        let is_head_base = self.base_ref.is_none();
         SoloDiffButtonStates {
-            stage,
-            unstage,
-            restore: stage || unstage,
+            stage: stage && is_head_base,
+            unstage: unstage && is_head_base,
+            restore: (stage || unstage) && is_head_base,
             prev_next,
             selection,
-            stage_file: stage_status.has_unstaged(),
-            unstage_file: stage_status.has_staged(),
+            stage_file: is_head_base && stage_status.has_unstaged(),
+            unstage_file: is_head_base && stage_status.has_staged(),
         }
     }
 
@@ -378,7 +471,7 @@ impl Item for SoloDiffView {
     }
 
     fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
-        self.buffer
+        let name: SharedString = self.buffer
             .read(cx)
             .file()
             .and_then(|file| {
@@ -395,7 +488,11 @@ impl Item for SoloDiffView {
                     .display(PathStyle::local())
                     .into_owned()
             })
-            .into()
+            .into();
+        match &self.base_ref {
+            Some(base_ref) => format!("{name} ↔ {}", crate::compare_panel::short_ref(base_ref)).into(),
+            None => name,
+        }
     }
 
     fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
