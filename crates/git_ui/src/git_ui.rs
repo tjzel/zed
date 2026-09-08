@@ -40,6 +40,8 @@ mod commit_modal;
 pub mod commit_tooltip;
 pub mod commit_view;
 mod conflict_view;
+pub mod compare_panel;
+pub mod diff_file_tree;
 mod diff_multibuffer;
 pub mod git_graph;
 pub mod git_panel;
@@ -111,6 +113,7 @@ pub fn init(cx: &mut App) {
         branch_diff::BranchDiff::register(workspace, cx);
         CommitModal::register(workspace);
         git_panel::register(workspace);
+        compare_panel::register(workspace);
         repository_selector::register(workspace);
         git_picker::register(workspace);
 

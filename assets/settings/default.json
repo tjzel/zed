@@ -996,6 +996,12 @@
     // Default width of the collaboration panel.
     "default_width": 240,
   },
+  "compare_panel": {
+    // Where to dock the compare panel. Can be 'left' or 'right'.
+    "dock": "right",
+    // Default width of the compare panel.
+    "default_width": 320
+  },
   "git_panel": {
     // Whether to show the git panel button in the status bar.
     "button": true,
