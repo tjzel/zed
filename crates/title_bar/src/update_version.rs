@@ -40,7 +40,10 @@ impl UpdateVersion {
     pub fn update_simulation(&mut self, cx: &mut Context<Self>) {
         let next_state = match self.status {
             AutoUpdateStatus::Idle => AutoUpdateStatus::Checking,
-            AutoUpdateStatus::Checking => AutoUpdateStatus::Downloading {
+            AutoUpdateStatus::Checking => AutoUpdateStatus::UpdateAvailable {
+                version: Version::new(1, 99, 0),
+            },
+            AutoUpdateStatus::UpdateAvailable { .. } => AutoUpdateStatus::Downloading {
                 version: Version::new(1, 99, 0),
                 progress: Some(0.5),
             },
@@ -94,6 +97,14 @@ impl Render for UpdateVersion {
         match &self.status {
             AutoUpdateStatus::Checking if self.update_check_type.is_manual() => {
                 UpdateButton::checking().into_any_element()
+            }
+            AutoUpdateStatus::UpdateAvailable { version } => {
+                let tooltip = Self::version_tooltip_message(version);
+                let release_notes_url = format!("https://zed.dev/releases/stable/{version}");
+                UpdateButton::update_available(tooltip)
+                    .on_click(move |_, _, cx| cx.open_url(&release_notes_url))
+                    .on_dismiss(cx.listener(|this, _, _window, cx| this.dismiss(cx)))
+                    .into_any_element()
             }
             AutoUpdateStatus::Downloading { version, progress } => {
                 let rendered_version = version.clone();

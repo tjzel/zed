@@ -45,6 +45,8 @@ impl std::fmt::Display for MissingDependencyError {
 
 impl std::error::Error for MissingDependencyError {}
 const POLL_INTERVAL: Duration = Duration::from_secs(60 * 60);
+
+const LOCAL_BUILD_NOTIFY_ONLY: bool = true;
 const NIGHTLY_POLL_INTERVAL: Duration = Duration::from_secs(15 * 60);
 const REMOTE_SERVER_CACHE_LIMIT: usize = 5;
 
@@ -123,6 +125,9 @@ pub struct AssetQuery<'a> {
 pub enum AutoUpdateStatus {
     Idle,
     Checking,
+    UpdateAvailable {
+        version: Version,
+    },
     Downloading {
         version: Version,
         /// Download progress as a fraction in the range `0.0..=1.0`, or `None`
@@ -147,6 +152,10 @@ impl PartialEq for AutoUpdateStatus {
         match (self, other) {
             (AutoUpdateStatus::Idle, AutoUpdateStatus::Idle) => true,
             (AutoUpdateStatus::Checking, AutoUpdateStatus::Checking) => true,
+            (
+                AutoUpdateStatus::UpdateAvailable { version: v1 },
+                AutoUpdateStatus::UpdateAvailable { version: v2 },
+            ) => v1 == v2,
             (
                 AutoUpdateStatus::Downloading { version: v1, .. },
                 AutoUpdateStatus::Downloading { version: v2, .. },
@@ -772,6 +781,16 @@ impl AutoUpdater {
             });
             return Ok(());
         };
+
+        if LOCAL_BUILD_NOTIFY_ONLY {
+            this.update(cx, |this, cx| {
+                this.status = AutoUpdateStatus::UpdateAvailable {
+                    version: newer_version,
+                };
+                cx.notify();
+            });
+            return Ok(());
+        }
 
         this.update(cx, |this, cx| {
             this.status = AutoUpdateStatus::Downloading {
