@@ -224,7 +224,27 @@ impl ComparePanel {
                     })
                     .ok();
             }
-            OpenTarget::Default | OpenTarget::MultiBuffer | OpenTarget::SingleBuffer => {
+            OpenTarget::SingleBuffer => {
+                let Some(repository) = self.repository(cx) else {
+                    return;
+                };
+                let base_oid = self
+                    .diff_buffer_list
+                    .as_ref()
+                    .and_then(|list| list.read(cx).base_oid_for_path(&repo_path))
+                    .flatten();
+                crate::solo_diff_view::SoloDiffView::open_or_focus_with_base(
+                    repo_path,
+                    repository,
+                    self.workspace.clone(),
+                    base_ref,
+                    base_oid,
+                    window,
+                    cx,
+                )
+                .detach_and_log_err(cx);
+            }
+            OpenTarget::Default | OpenTarget::MultiBuffer => {
                 let Some(repository) = self.repository(cx) else {
                     return;
                 };
@@ -370,7 +390,7 @@ impl Render for ComparePanel {
     }
 }
 
-fn short_ref(base_ref: &str) -> &str {
+pub(crate) fn short_ref(base_ref: &str) -> &str {
     if base_ref.len() == 40 && base_ref.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         &base_ref[..8]
     } else {
