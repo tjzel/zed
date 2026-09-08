@@ -70,7 +70,8 @@ use strum::{IntoEnumIterator, VariantNames};
 use theme_settings::ThemeSettings;
 use time::OffsetDateTime;
 use ui::{
-    ButtonLike, Checkbox, CommonAnimationExt, ContextMenu, ElevationIndex, IndentGuideColors,
+    ButtonLike, Checkbox, CommonAnimationExt, ContextMenu, ContextMenuEntry, ElevationIndex,
+    IndentGuideColors,
     PopoverMenu, RenderedIndentGuide, ScrollAxes, Scrollbars, SplitButton, Tooltip, WithScrollbar,
     prelude::*,
 };
@@ -162,6 +163,21 @@ struct GitMenuState {
     sort_by_path: bool,
     has_stash_items: bool,
     tree_view: bool,
+}
+
+fn is_in_scope(repo_path: &RepoPath, scope: Option<&RepoPath>) -> bool {
+    scope.is_none_or(|scope| repo_path.starts_with(scope))
+}
+
+fn scope_name(scope: Option<&RepoPath>) -> Option<String> {
+    let scope = scope?;
+    Some(
+        scope
+            .as_ref()
+            .file_name()
+            .unwrap_or_else(|| scope.as_unix_str())
+            .to_string(),
+    )
 }
 
 fn git_panel_context_menu(
@@ -1655,11 +1671,22 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.restore_tracked_files_in(None, window, cx)
+    }
+
+    /// Discards changes to tracked files, restricted to `scope` when given.
+    fn restore_tracked_files_in(
+        &mut self,
+        scope: Option<RepoPath>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let entries = self
             .entries
             .iter()
             .filter_map(|entry| entry.status_entry().cloned())
             .filter(|status_entry| !status_entry.status.is_created())
+            .filter(|status_entry| is_in_scope(&status_entry.repo_path, scope.as_ref()))
             .collect::<Vec<_>>();
 
         match entries.len() {
@@ -1683,12 +1710,11 @@ impl GitPanel {
             RestoreTrackedFiles,
             Cancel,
         }
-        let prompt = prompt(
-            "Discard changes to these files?",
-            Some(&details),
-            window,
-            cx,
-        );
+        let message = match scope_name(scope.as_ref()) {
+            Some(folder) => format!("Discard changes to these files in {folder}?"),
+            None => "Discard changes to these files?".to_string(),
+        };
+        let prompt = prompt(&message, Some(&details), window, cx);
         cx.spawn_in(window, async move |this, cx| {
             if let Ok(RestoreCancel::RestoreTrackedFiles) = prompt.await {
                 this.update_in(cx, |this, window, cx| {
@@ -1701,6 +1727,16 @@ impl GitPanel {
     }
 
     fn clean_all(&mut self, _: &TrashUntrackedFiles, window: &mut Window, cx: &mut Context<Self>) {
+        self.clean_untracked_files_in(None, window, cx)
+    }
+
+    /// Trashes untracked files, restricted to `scope` when given.
+    fn clean_untracked_files_in(
+        &mut self,
+        scope: Option<RepoPath>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let workspace = self.workspace.clone();
         let Some(active_repo) = self.active_repository.clone() else {
             return;
@@ -1710,6 +1746,7 @@ impl GitPanel {
             .iter()
             .filter_map(|entry| entry.status_entry())
             .filter(|status_entry| status_entry.status.is_created())
+            .filter(|status_entry| is_in_scope(&status_entry.repo_path, scope.as_ref()))
             .cloned()
             .collect::<Vec<_>>();
 
@@ -1736,7 +1773,11 @@ impl GitPanel {
             details.push_str(&format!("\nand {} more…", to_delete.len() - 5))
         }
 
-        let prompt = prompt("Trash these files?", Some(&details), window, cx);
+        let message = match scope_name(scope.as_ref()) {
+            Some(folder) => format!("Trash these files in {folder}?"),
+            None => "Trash these files?".to_string(),
+        };
+        let prompt = prompt(&message, Some(&details), window, cx);
         cx.spawn_in(window, async move |this, cx| {
             match prompt.await? {
                 TrashCancel::Trash => {}
@@ -5026,6 +5067,98 @@ impl GitPanel {
         self.set_context_menu(context_menu, position, window, cx);
     }
 
+    fn entries_in_scope(&self, scope: &RepoPath) -> Vec<GitStatusEntry> {
+        self.entries
+            .iter()
+            .filter_map(|entry| entry.status_entry())
+            .filter(|status_entry| is_in_scope(&status_entry.repo_path, Some(scope)))
+            .cloned()
+            .collect()
+    }
+
+    fn deploy_directory_context_menu(
+        &mut self,
+        position: Point<Pixels>,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(GitListEntry::Directory(dir_entry)) = self.entries.get(ix).cloned() else {
+            return;
+        };
+        let scope = dir_entry.key.path.clone();
+        let has_tracked_changes = self.entries.iter().any(|entry| {
+            entry.status_entry().is_some_and(|status_entry| {
+                !status_entry.status.is_created()
+                    && is_in_scope(&status_entry.repo_path, Some(&scope))
+            })
+        });
+        let has_untracked_files = self.entries.iter().any(|entry| {
+            entry.status_entry().is_some_and(|status_entry| {
+                status_entry.status.is_created()
+                    && is_in_scope(&status_entry.repo_path, Some(&scope))
+            })
+        });
+
+        let this = cx.weak_entity();
+        let focus_handle = self.focus_handle.clone();
+        let context_menu = ContextMenu::build(window, cx, move |context_menu, _, _| {
+            context_menu
+                .context(focus_handle)
+                .entry("Stage Folder", None, {
+                    let this = this.clone();
+                    let scope = scope.clone();
+                    move |_, cx| {
+                        this.update(cx, |this, cx| {
+                            this.change_file_stage(true, this.entries_in_scope(&scope), cx);
+                        })
+                        .ok();
+                    }
+                })
+                .entry("Unstage Folder", None, {
+                    let this = this.clone();
+                    let scope = scope.clone();
+                    move |_, cx| {
+                        this.update(cx, |this, cx| {
+                            this.change_file_stage(false, this.entries_in_scope(&scope), cx);
+                        })
+                        .ok();
+                    }
+                })
+                .separator()
+                .item(
+                    ContextMenuEntry::new("Discard Changes in Folder")
+                        .disabled(!has_tracked_changes)
+                        .handler({
+                            let this = this.clone();
+                            let scope = scope.clone();
+                            move |window, cx| {
+                                this.update(cx, |this, cx| {
+                                    this.restore_tracked_files_in(Some(scope.clone()), window, cx);
+                                })
+                                .ok();
+                            }
+                        }),
+                )
+                .item(
+                    ContextMenuEntry::new("Trash Untracked Files in Folder")
+                        .disabled(!has_untracked_files)
+                        .handler({
+                            let this = this.clone();
+                            let scope = scope.clone();
+                            move |window, cx| {
+                                this.update(cx, |this, cx| {
+                                    this.clean_untracked_files_in(Some(scope.clone()), window, cx);
+                                })
+                                .ok();
+                            }
+                        }),
+                )
+        });
+        self.selected_entry = Some(ix);
+        self.set_context_menu(context_menu, position, window, cx);
+    }
+
     fn deploy_panel_context_menu(
         &mut self,
         position: Point<Pixels>,
@@ -5476,6 +5609,13 @@ impl GitPanel {
                     this.toggle_directory(&key, window, cx);
                 })
             })
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                    this.deploy_directory_context_menu(event.position, ix, window, cx);
+                    cx.stop_propagation();
+                }),
+            )
             .into_any_element()
     }
 
