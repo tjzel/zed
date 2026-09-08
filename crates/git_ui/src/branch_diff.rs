@@ -493,6 +493,17 @@ impl BranchDiff {
             .detach_and_notify_err(workspace, window, cx);
     }
 
+    pub(crate) fn move_to_project_path(
+        &mut self,
+        project_path: &ProjectPath,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.diff.update(cx, |diff, cx| {
+            diff.move_to_project_path(project_path, window, cx);
+        });
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn editor(&self, cx: &App) -> Entity<SplittableEditor> {
         self.diff.read(cx).editor().clone()
