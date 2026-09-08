@@ -307,18 +307,26 @@ fn git_panel_context_menu(
     has_stash_items: bool,
     group_by: GitPanelGroupBy,
     include_copy_paths: bool,
+    is_directory: bool,
     focus_handle: FocusHandle,
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<ContextMenu> {
+    // These actions apply to the folder the menu was opened on, so the labels
+    // must not promise a repository-wide effect.
+    let (stage_label, unstage_label, restore_label) = if is_directory {
+        ("Stage Folder", "Unstage Folder", "Restore Changes in Folder")
+    } else {
+        ("Stage All", "Unstage All", "Restore All Changes")
+    };
     ContextMenu::build(window, cx, |context_menu, _, _| {
         context_menu
             .context(focus_handle.clone())
-            .action_disabled_when(!has_unstaged_changes, "Stage All", StageAll.boxed_clone())
-            .action_disabled_when(!has_staged_changes, "Unstage All", UnstageAll.boxed_clone())
+            .action_disabled_when(!has_unstaged_changes, stage_label, StageAll.boxed_clone())
+            .action_disabled_when(!has_staged_changes, unstage_label, UnstageAll.boxed_clone())
             .action_disabled_when(
                 !has_staged_tracked_changes,
-                "Restore All Changes",
+                restore_label,
                 RestoreTrackedFiles.boxed_clone(),
             )
             .separator()
@@ -354,12 +362,20 @@ fn git_panel_context_menu(
             .separator()
             .action_disabled_when(
                 !has_staged_tracked_changes,
-                "Discard Tracked Changes",
+                if is_directory {
+                    "Discard Tracked Changes in Folder"
+                } else {
+                    "Discard Tracked Changes"
+                },
                 RestoreTrackedFiles.boxed_clone(),
             )
             .action_disabled_when(
                 !has_new_changes,
-                "Trash Untracked Files",
+                if is_directory {
+                    "Trash Untracked Files in Folder"
+                } else {
+                    "Trash Untracked Files"
+                },
                 TrashUntrackedFiles.boxed_clone(),
             )
     })
@@ -2095,6 +2111,16 @@ impl GitPanel {
         entries.into_iter().any(Self::is_staged_tracked)
     }
 
+    fn untracked_entries<'a>(
+        entries: impl IntoIterator<Item = &'a GitStatusEntry>,
+    ) -> Vec<GitStatusEntry> {
+        entries
+            .into_iter()
+            .filter(|entry| entry.status.is_created())
+            .cloned()
+            .collect()
+    }
+
     fn staged_tracked_entries<'a>(
         entries: impl IntoIterator<Item = &'a GitStatusEntry>,
     ) -> Vec<GitStatusEntry> {
@@ -2570,10 +2596,9 @@ impl GitPanel {
             return;
         };
         let to_delete = self
-            .change_entries_by_path()
-            .filter(|status_entry| status_entry.status.is_created())
-            .cloned()
-            .collect::<Vec<_>>();
+            .directory_context_descendants()
+            .map(Self::untracked_entries)
+            .unwrap_or_else(|| Self::untracked_entries(self.change_entries_by_path()));
 
         match to_delete.len() {
             0 => return,
@@ -2598,7 +2623,19 @@ impl GitPanel {
             details.push_str(&format!("\nand {} more…", to_delete.len() - 5))
         }
 
-        let prompt = prompt("Trash these files?", Some(&details), window, cx);
+        let folder_name = self
+            .context_menu
+            .as_ref()
+            .and_then(|context_menu| context_menu.target_entry_index)
+            .and_then(|index| match self.entries.get(index) {
+                Some(GitListEntry::Directory(directory)) => Some(directory.name.clone()),
+                _ => None,
+            });
+        let message = match &folder_name {
+            Some(folder_name) => format!("Trash these files in {folder_name}?"),
+            None => "Trash these files?".to_string(),
+        };
+        let prompt = prompt(&message, Some(&details), window, cx);
         cx.spawn_in(window, async move |this, cx| {
             match prompt.await? {
                 TrashCancel::Trash => {}
@@ -2748,11 +2785,23 @@ impl GitPanel {
     }
 
     pub fn stage_all(&mut self, _: &StageAll, _window: &mut Window, cx: &mut Context<Self>) {
-        self.change_all_files_stage(true, cx);
+        self.change_stage_in_context_scope(true, cx);
     }
 
     pub fn unstage_all(&mut self, _: &UnstageAll, _window: &mut Window, cx: &mut Context<Self>) {
-        self.change_all_files_stage(false, cx);
+        self.change_stage_in_context_scope(false, cx);
+    }
+
+    /// Stages or unstages every changed file, or only those under the folder
+    /// whose context menu is open.
+    fn change_stage_in_context_scope(&mut self, stage: bool, cx: &mut Context<Self>) {
+        match self.directory_context_descendants() {
+            Some(entries) => {
+                let entries = entries.to_vec();
+                self.change_file_stage(stage, entries, cx);
+            }
+            None => self.change_all_files_stage(stage, cx),
+        }
     }
 
     fn toggle_staged_for_entry(
@@ -5949,6 +5998,7 @@ impl GitPanel {
                     has_stash_items,
                     group_by,
                     false,
+                    false,
                     focus_handle.clone(),
                     window,
                     cx,
@@ -7726,6 +7776,8 @@ impl GitPanel {
             has_stash_items,
             GitPanelSettings::get_global(cx).group_by,
             include_copy_paths,
+            target_entry_index
+                .is_some_and(|index| matches!(self.entries.get(index), Some(GitListEntry::Directory(_)))),
             self.focus_handle.clone(),
             window,
             cx,
