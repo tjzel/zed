@@ -57,6 +57,8 @@ actions!(
         LeaderAndFollower,
         /// Compare with a specific branch
         CompareWithBranch,
+        /// Compare with a specific commit, chosen from the commit log.
+        CompareWithCommit,
     ]
 );
 

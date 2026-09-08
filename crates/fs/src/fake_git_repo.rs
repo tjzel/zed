@@ -1125,6 +1125,14 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
+    fn log_commits(
+        &self,
+        _skip: usize,
+        _limit: Option<usize>,
+    ) -> BoxFuture<'_, Result<Vec<git::repository::CommitSummary>>> {
+        async move { Ok(Vec::new()) }.boxed()
+    }
+
     fn stage_paths(
         &self,
         paths: Vec<RepoPath>,
