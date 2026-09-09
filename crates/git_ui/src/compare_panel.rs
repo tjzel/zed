@@ -162,21 +162,30 @@ impl ComparePanel {
         let Some(repository) = self.repository(cx) else {
             return;
         };
+        let branches = repository.update(cx, |repository, _| repository.branches());
         let commits = repository.update(cx, |repository, _| repository.log_commits(0, Some(500)));
         cx.spawn_in(window, async move |this, cx| {
+            let branches = branches.await?.map(|scan| scan.branches).unwrap_or_default();
             let commits = commits.await??;
-            anyhow::ensure!(!commits.is_empty(), "No commits found in this repository");
 
-            let options = commits
-                .iter()
-                .map(|commit| {
-                    let short_sha = commit.sha.get(0..8).unwrap_or(commit.sha.as_ref());
-                    SharedString::from(format!(
-                        "{short_sha} {} — {}",
-                        commit.subject, commit.author_name
-                    ))
-                })
-                .collect::<Vec<_>>();
+            let mut options = Vec::with_capacity(branches.len() + commits.len());
+            let mut refs: Vec<SharedString> = Vec::with_capacity(branches.len() + commits.len());
+            for branch in &branches {
+                if branch.is_head {
+                    continue;
+                }
+                options.push(SharedString::from(format!("branch: {}", branch.name())));
+                refs.push(branch.name().to_owned().into());
+            }
+            for commit in &commits {
+                let short_sha = commit.sha.get(0..8).unwrap_or(commit.sha.as_ref());
+                options.push(SharedString::from(format!(
+                    "{short_sha} {} — {}",
+                    commit.subject, commit.author_name
+                )));
+                refs.push(commit.sha.clone());
+            }
+            anyhow::ensure!(!options.is_empty(), "No branches or commits found");
 
             let workspace = this.read_with(cx, |this, _| this.workspace.clone())?;
             let selection = cx
@@ -190,10 +199,9 @@ impl ComparePanel {
                     )
                 })?
                 .await;
-            let Some(commit) = selection.and_then(|index| commits.get(index)) else {
+            let Some(base_ref) = selection.and_then(|index| refs.get(index).cloned()) else {
                 return anyhow::Ok(());
             };
-            let base_ref = commit.sha.clone();
             this.update(cx, |this, cx| this.set_base(base_ref, cx))?;
             anyhow::Ok(())
         })
@@ -368,7 +376,7 @@ impl Render for ComparePanel {
                     .child(
                         Button::new("choose-compare-base", "Change")
                             .label_size(LabelSize::Small)
-                            .tooltip(Tooltip::text("Choose a commit to compare against"))
+                            .tooltip(Tooltip::text("Choose a branch or commit to compare against"))
                             .on_click(
                                 cx.listener(|this, _, window, cx| this.choose_base(window, cx)),
                             ),
@@ -380,7 +388,7 @@ impl Render for ComparePanel {
                 } else {
                     el.child(
                         v_flex().size_full().items_center().justify_center().child(
-                            Button::new("pick-compare-base", "Choose a commit…").on_click(
+                            Button::new("pick-compare-base", "Choose a branch or commit…").on_click(
                                 cx.listener(|this, _, window, cx| this.choose_base(window, cx)),
                             ),
                         ),
