@@ -126,6 +126,7 @@ impl BranchDiff {
                         intended_repo,
                         base_ref,
                         branch_diff,
+                        None,
                         window,
                         cx,
                     );
@@ -189,7 +190,7 @@ impl BranchDiff {
                 let base_ref = commit.sha.clone();
                 workspace_handle.update_in(cx, |workspace, window, cx| {
                     Self::deploy_branch_diff_with_base_ref(
-                        workspace, project, repository, base_ref, None, window, cx,
+                        workspace, project, repository, base_ref, None, None, window, cx,
                     );
                 })?;
                 anyhow::Ok(())
@@ -234,6 +235,7 @@ impl BranchDiff {
                             repository.clone(),
                             base_ref,
                             None,
+                            None,
                             window,
                             cx,
                         );
@@ -260,6 +262,7 @@ impl BranchDiff {
         intended_repo: Entity<Repository>,
         base_ref: SharedString,
         branch_diff: Option<Entity<diff_buffer_list::DiffBufferList>>,
+        move_to: Option<ProjectPath>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
@@ -277,6 +280,11 @@ impl BranchDiff {
         });
         if let Some(existing) = existing {
             workspace.activate_item(&existing, true, true, window, cx);
+            if let Some(project_path) = move_to {
+                existing.update(cx, |branch_diff, cx| {
+                    branch_diff.move_to_project_path(&project_path, window, cx);
+                });
+            }
             return;
         }
 
@@ -299,7 +307,18 @@ impl BranchDiff {
                     .await?;
                 workspace
                     .update_in(cx, |workspace, window, cx| {
-                        workspace.add_item_to_active_pane(Box::new(this), None, true, window, cx);
+                        workspace.add_item_to_active_pane(
+                            Box::new(this.clone()),
+                            None,
+                            true,
+                            window,
+                            cx,
+                        );
+                        if let Some(project_path) = move_to {
+                            this.update(cx, |branch_diff, cx| {
+                                branch_diff.move_to_project_path(&project_path, window, cx);
+                            });
+                        }
                     })
                     .ok();
                 anyhow::Ok(())
@@ -911,6 +930,7 @@ impl Render for BranchDiffToolbar {
                                                 project.clone(),
                                                 repository,
                                                 base_ref,
+                                                None,
                                                 None,
                                                 window,
                                                 cx,

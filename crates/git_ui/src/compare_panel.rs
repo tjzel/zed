@@ -266,14 +266,10 @@ impl ComparePanel {
                             repository,
                             base_ref,
                             diff_buffer_list,
+                            Some(project_path),
                             window,
                             cx,
                         );
-                        if let Some(branch_diff) = workspace.active_item_as::<BranchDiff>(cx) {
-                            branch_diff.update(cx, |branch_diff, cx| {
-                                branch_diff.move_to_project_path(&project_path, window, cx);
-                            });
-                        }
                     })
                     .ok();
             }
