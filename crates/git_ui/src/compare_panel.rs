@@ -257,7 +257,21 @@ impl ComparePanel {
                     return;
                 };
                 let project = self.project.clone();
-                let diff_buffer_list = self.diff_buffer_list.clone();
+                // Excerpts are keyed by the status this comparison reports, so
+                // build the key here where that status is known rather than
+                // letting the tab re-derive it before its own list has loaded.
+                let path_key = self
+                    .diff_buffer_list
+                    .as_ref()
+                    .and_then(|list| list.read(cx).status_for_path(&repo_path, cx))
+                    .map(|status| {
+                        crate::diff_multibuffer::project_diff_path_key(
+                            &repository.read(cx),
+                            &repo_path,
+                            status,
+                            cx,
+                        )
+                    });
                 self.workspace
                     .update(cx, |workspace, cx| {
                         BranchDiff::deploy_branch_diff_with_base_ref(
@@ -265,8 +279,8 @@ impl ComparePanel {
                             project,
                             repository,
                             base_ref,
-                            diff_buffer_list,
-                            Some(project_path),
+                            None,
+                            path_key,
                             window,
                             cx,
                         );

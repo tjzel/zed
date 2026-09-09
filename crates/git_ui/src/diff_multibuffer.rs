@@ -234,10 +234,19 @@ impl DiffMultibuffer {
         else {
             return;
         };
-        let status = git_repo
+        // Excerpts are keyed by the status this diff reports for the path, which
+        // for a merge base is not the working tree's status. Deriving it from the
+        // repository instead would build a different key and never match.
+        let status = self
+            .branch_diff
             .read(cx)
-            .status_for_path(&repo_path)
-            .map(|entry| entry.status)
+            .status_for_path(&repo_path, cx)
+            .or_else(|| {
+                git_repo
+                    .read(cx)
+                    .status_for_path(&repo_path)
+                    .map(|entry| entry.status)
+            })
             .unwrap_or(FileStatus::Untracked);
         let path_key = project_diff_path_key(&git_repo.read(cx), &repo_path, status, cx);
         self.move_to_path(path_key, window, cx)
