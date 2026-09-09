@@ -114,6 +114,9 @@ and the tree are new.
   commits.
 - The tree nests directories, flattens single-child chains, and shows file icons, git status icons,
   status colors (via upstream's `file_status_label_color`), and strikethrough for deleted files.
+- Each row shows its added/deleted line counts, and the header shows the totals. The diff's file list
+  carries no line counts for a merge base, so they come from one `git diff --numstat --merge-base`
+  per comparison, via a new `DiffStatType::MergeBase` and `Repository::merge_base_diff_stat`.
 - Click opens the file in the multibuffer diff, scrolled to it. Right-click offers **Open File**,
   **Open as Singlebuffer**, and **Open as Multibuffer**.
 - The file list comes from upstream's `DiffBufferList` model, so it refreshes as the working tree

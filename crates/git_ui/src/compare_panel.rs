@@ -1,3 +1,4 @@
+use collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -14,7 +15,7 @@ use project::{
     },
 };
 use settings::Settings as _;
-use ui::{Button, ButtonCommon as _, Clickable as _, Tooltip, prelude::*};
+use ui::{Button, ButtonCommon as _, Clickable as _, DiffStat, Tooltip, prelude::*};
 use workspace::Workspace;
 use workspace::dock::{DockPosition, Panel, PanelEvent};
 
@@ -56,6 +57,7 @@ pub struct ComparePanel {
     workspace: WeakEntity<Workspace>,
     diff_buffer_list: Option<Entity<DiffBufferList>>,
     base_ref: Option<SharedString>,
+    diff_stats: HashMap<RepoPath, git::status::DiffStat>,
     file_tree: Entity<DiffFileTree>,
     fs: Arc<dyn Fs>,
     focus_handle: FocusHandle,
@@ -98,6 +100,7 @@ impl ComparePanel {
             workspace,
             diff_buffer_list: None,
             base_ref: None,
+            diff_stats: HashMap::default(),
             file_tree,
             focus_handle: cx.focus_handle(),
             _tree_subscription: tree_subscription,
@@ -126,13 +129,16 @@ impl ComparePanel {
             &diff_buffer_list,
             |this, _, event: &BranchDiffEvent, cx| match event {
                 BranchDiffEvent::FileListChanged | BranchDiffEvent::DiffBaseChanged => {
-                    this.refresh_entries(cx)
+                    this.refresh_entries(cx);
+                    this.refresh_diff_stats(cx);
                 }
             },
         ));
         self.diff_buffer_list = Some(diff_buffer_list);
         self.base_ref = Some(base_ref);
+        self.diff_stats.clear();
         self.refresh_entries(cx);
+        self.refresh_diff_stats(cx);
         cx.notify();
     }
 
@@ -147,6 +153,7 @@ impl ComparePanel {
                 statuses
                     .iter()
                     .map(|status| DiffTreeEntry {
+                        diff_stat: self.diff_stats.get(&status.repo_path).copied(),
                         repo_path: status.repo_path.clone(),
                         status: status.status,
                     })
@@ -156,6 +163,27 @@ impl ComparePanel {
         self.file_tree
             .update(cx, |file_tree, cx| file_tree.set_entries(entries, cx));
         cx.notify();
+    }
+
+    /// Line counts are not part of the diff's file list, so they are fetched
+    /// separately with one `git diff --numstat` for the whole comparison.
+    fn refresh_diff_stats(&mut self, cx: &mut Context<Self>) {
+        let (Some(repository), Some(base_ref)) = (self.repository(cx), self.base_ref.clone())
+        else {
+            return;
+        };
+        let stats = repository.update(cx, |repository, _| {
+            repository.merge_base_diff_stat(base_ref)
+        });
+        cx.spawn(async move |this, cx| {
+            let stats = stats.await??;
+            this.update(cx, |this, cx| {
+                this.diff_stats = stats.entries.iter().cloned().collect();
+                this.refresh_entries(cx);
+            })?;
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 
     fn choose_base(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -351,6 +379,10 @@ impl Panel for ComparePanel {
 
 impl Render for ComparePanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let totals = match self.file_tree.read(cx).totals() {
+            (0, 0) => None,
+            totals => Some(totals),
+        };
         let header: SharedString = match &self.base_ref {
             Some(base_ref) => {
                 let short = short_ref(base_ref);
@@ -378,10 +410,19 @@ impl Render for ComparePanel {
                     .border_b_1()
                     .border_color(cx.theme().colors().border)
                     .child(
-                        Label::new(header)
-                            .size(LabelSize::Small)
-                            .color(Color::Muted)
-                            .truncate(),
+                        h_flex()
+                            .gap_1p5()
+                            .min_w_0()
+                            .child(
+                                Label::new(header)
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted)
+                                    .truncate(),
+                            )
+                            .children(totals.map(|(added, deleted)| {
+                                DiffStat::new("compare-totals", added as usize, deleted as usize)
+                                    .tooltip("Lines changed in this comparison")
+                            })),
                     )
                     .child(
                         Button::new("choose-compare-base", "Change")

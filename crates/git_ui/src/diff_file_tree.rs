@@ -11,7 +11,7 @@ use gpui::{
     MouseDownEvent, Point, ScrollStrategy, SharedString, Subscription, UniformListScrollHandle,
     Window, anchored, deferred, uniform_list,
 };
-use ui::{ContextMenu, ListItem, prelude::*};
+use ui::{ContextMenu, DiffStat, ListItem, prelude::*};
 
 use crate::git_status_icon;
 
@@ -30,6 +30,7 @@ pub struct DiffFileTree {
 pub struct DiffTreeEntry {
     pub repo_path: RepoPath,
     pub status: FileStatus,
+    pub diff_stat: Option<git::status::DiffStat>,
 }
 
 pub enum DiffFileTreeEvent {
@@ -95,7 +96,12 @@ impl DiffFileTree {
                 .entries
                 .iter()
                 .zip(&entries)
-                .all(|(old, new)| old.repo_path == new.repo_path && old.status == new.status)
+                .all(|(old, new)| {
+                    old.repo_path == new.repo_path
+                        && old.status == new.status
+                        && old.diff_stat.map(|stat| (stat.added, stat.deleted))
+                            == new.diff_stat.map(|stat| (stat.added, stat.deleted))
+                })
         {
             return;
         }
@@ -110,6 +116,16 @@ impl DiffFileTree {
 
     pub fn len(&self) -> usize {
         self.entries.len()
+    }
+
+    /// Total added and deleted lines across every changed file.
+    pub fn totals(&self) -> (u32, u32) {
+        self.entries
+            .iter()
+            .filter_map(|entry| entry.diff_stat)
+            .fold((0, 0), |(added, deleted), stat| {
+                (added + stat.added, deleted + stat.deleted)
+            })
     }
 
     pub fn set_active_path(&mut self, active_path: Option<RepoPath>, cx: &mut Context<Self>) {
@@ -368,6 +384,10 @@ impl DiffFileTree {
                             .truncate(),
                     ),
             )
+            .end_slot::<AnyElement>(entry.diff_stat.map(|stat| {
+                DiffStat::new(("diff-stat", ix), stat.added as usize, stat.deleted as usize)
+                    .into_any_element()
+            }))
             .into_any_element()
     }
 }
