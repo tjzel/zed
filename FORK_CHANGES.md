@@ -110,6 +110,8 @@ no file-tree view of a diff and only one dock panel in `git_ui` (the git panel),
 and the tree are new.
 
 - Header shows the current base and a **Change** button; open with `compare panel: toggle focus`.
+  The picker lists local and remote branches (so `origin/main` works) followed by the last 500
+  commits.
 - The tree nests directories, flattens single-child chains, and shows file icons, git status icons,
   status colors (via upstream's `file_status_label_color`), and strikethrough for deleted files.
 - Click opens the file in the multibuffer diff, scrolled to it. Right-click offers **Open File**,
