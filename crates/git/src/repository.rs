@@ -1110,11 +1110,13 @@ pub enum DiffType {
     MergeBase { base_ref: SharedString },
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub enum DiffStatType {
     HeadToIndex,
     HeadToWorktree,
     IndexToWorktree,
+    /// Line counts between the merge base of `base_ref` and the working tree.
+    MergeBase { base_ref: SharedString },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
@@ -2528,6 +2530,9 @@ impl GitRepository for RealGitRepository {
                     DiffStatType::HeadToIndex => args.extend(["--cached".into(), "HEAD".into()]),
                     DiffStatType::HeadToWorktree => args.push("HEAD".into()),
                     DiffStatType::IndexToWorktree => {}
+                    DiffStatType::MergeBase { base_ref } => {
+                        args.extend(["--merge-base".into(), base_ref.to_string()])
+                    }
                 }
                 if !path_prefixes.is_empty() {
                     args.push("--".into());

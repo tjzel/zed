@@ -1268,6 +1268,11 @@ impl GitRepository for FakeGitRepository {
                 git::repository::DiffStatType::IndexToWorktree => {
                     (&state.index_contents, &worktree_files)
                 }
+                // The fake repository has no commit graph, so a merge base is
+                // indistinguishable from HEAD here.
+                git::repository::DiffStatType::MergeBase { .. } => {
+                    (&state.head_contents, &worktree_files)
+                }
             };
             let all_paths: HashSet<&RepoPath> = match diff {
                 git::repository::DiffStatType::HeadToIndex => state
@@ -1287,6 +1292,11 @@ impl GitRepository for FakeGitRepository {
                 git::repository::DiffStatType::IndexToWorktree => {
                     state.index_contents.keys().collect()
                 }
+                git::repository::DiffStatType::MergeBase { .. } => state
+                    .head_contents
+                    .keys()
+                    .chain(worktree_files.keys())
+                    .collect(),
             };
             for path in all_paths {
                 if !matches_prefixes(path, &path_prefixes) {

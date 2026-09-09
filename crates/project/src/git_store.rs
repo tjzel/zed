@@ -7017,6 +7017,30 @@ impl Repository {
         })
     }
 
+    /// Line counts per path between the merge base of `base_ref` and the
+    /// working tree.
+    pub fn merge_base_diff_stat(
+        &mut self,
+        base_ref: SharedString,
+    ) -> oneshot::Receiver<Result<git::status::GitDiffStat>> {
+        self.send_job(
+            "merge_base_diff_stat",
+            None,
+            move |git_repo, _cx| async move {
+                match git_repo {
+                    RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                        backend
+                            .diff_stat(DiffStatType::MergeBase { base_ref }, &[])
+                            .await
+                    }
+                    RepositoryState::Remote(_) => {
+                        anyhow::bail!("diff stats for a merge base are not supported remotely")
+                    }
+                }
+            },
+        )
+    }
+
     pub fn log_commits(
         &mut self,
         skip: usize,
