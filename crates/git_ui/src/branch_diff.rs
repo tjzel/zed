@@ -262,7 +262,7 @@ impl BranchDiff {
         intended_repo: Entity<Repository>,
         base_ref: SharedString,
         branch_diff: Option<Entity<diff_buffer_list::DiffBufferList>>,
-        move_to: Option<ProjectPath>,
+        move_to: Option<multi_buffer::PathKey>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
@@ -280,9 +280,9 @@ impl BranchDiff {
         });
         if let Some(existing) = existing {
             workspace.activate_item(&existing, true, true, window, cx);
-            if let Some(project_path) = move_to {
+            if let Some(path_key) = move_to {
                 existing.update(cx, |branch_diff, cx| {
-                    branch_diff.move_to_project_path(&project_path, window, cx);
+                    branch_diff.move_to_path(path_key, window, cx);
                 });
             }
             return;
@@ -314,9 +314,9 @@ impl BranchDiff {
                             window,
                             cx,
                         );
-                        if let Some(project_path) = move_to {
+                        if let Some(path_key) = move_to {
                             this.update(cx, |branch_diff, cx| {
-                                branch_diff.move_to_project_path(&project_path, window, cx);
+                                branch_diff.move_to_path(path_key, window, cx);
                             });
                         }
                     })
@@ -512,14 +512,14 @@ impl BranchDiff {
             .detach_and_notify_err(workspace, window, cx);
     }
 
-    pub(crate) fn move_to_project_path(
+    pub(crate) fn move_to_path(
         &mut self,
-        project_path: &ProjectPath,
+        path_key: multi_buffer::PathKey,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.diff.update(cx, |diff, cx| {
-            diff.move_to_project_path(project_path, window, cx);
+            diff.move_to_path(path_key, window, cx);
         });
     }
 
