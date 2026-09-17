@@ -134,6 +134,10 @@ impl DiffBufferList {
         *self.update_needed.borrow_mut() = ();
     }
 
+    pub fn reload(&mut self) {
+        *self.update_needed.borrow_mut() = ();
+    }
+
     pub fn set_diff_base(&mut self, diff_base: DiffBase, cx: &mut Context<Self>) {
         if self.diff_base == diff_base {
             *self.update_needed.borrow_mut() = ();

@@ -7041,6 +7041,12 @@ impl Repository {
         )
     }
 
+    /// Recomputes the repository snapshot from disk, for callers that want to
+    /// resync the UI without waiting for a file system event.
+    pub fn rescan(&mut self, cx: &mut Context<Self>) {
+        self.schedule_scan(None, cx);
+    }
+
     pub fn log_commits(
         &mut self,
         skip: usize,

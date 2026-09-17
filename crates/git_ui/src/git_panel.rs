@@ -315,7 +315,11 @@ fn git_panel_context_menu(
     // These actions apply to the folder the menu was opened on, so the labels
     // must not promise a repository-wide effect.
     let (stage_label, unstage_label, restore_label) = if is_directory {
-        ("Stage Folder", "Unstage Folder", "Restore Changes in Folder")
+        (
+            "Stage Folder",
+            "Unstage Folder",
+            "Restore Changes in Folder",
+        )
     } else {
         ("Stage All", "Unstage All", "Restore All Changes")
     };
@@ -2105,9 +2109,7 @@ impl GitPanel {
         !entry.status.is_created()
     }
 
-    fn contains_tracked_change<'a>(
-        entries: impl IntoIterator<Item = &'a GitStatusEntry>,
-    ) -> bool {
+    fn contains_tracked_change<'a>(entries: impl IntoIterator<Item = &'a GitStatusEntry>) -> bool {
         entries.into_iter().any(Self::is_tracked_change)
     }
 
@@ -6108,10 +6110,26 @@ impl GitPanel {
                 .child(
                     h_flex()
                         .gap_1()
+                        .child(
+                            IconButton::new("refresh-changes", IconName::ArrowCircle)
+                                .icon_size(IconSize::Small)
+                                .tooltip(Tooltip::text("Refresh Git State"))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.refresh_repository_state(window, cx)
+                                })),
+                        )
                         .child(self.render_view_options_menu("view_options_menu"))
                         .child(self.render_git_changes_actions_button(cx)),
                 ),
         )
+    }
+
+    fn refresh_repository_state(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(repository) = self.active_repository.clone() {
+            repository.update(cx, |repository, cx| repository.rescan(cx));
+        }
+        self.update_visible_entries(window, cx);
+        cx.notify();
     }
 
     pub(crate) fn render_remote_button(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -7776,8 +7794,9 @@ impl GitPanel {
             has_stash_items,
             GitPanelSettings::get_global(cx).group_by,
             include_copy_paths,
-            target_entry_index
-                .is_some_and(|index| matches!(self.entries.get(index), Some(GitListEntry::Directory(_)))),
+            target_entry_index.is_some_and(|index| {
+                matches!(self.entries.get(index), Some(GitListEntry::Directory(_)))
+            }),
             self.focus_handle.clone(),
             window,
             cx,

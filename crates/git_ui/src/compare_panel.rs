@@ -98,14 +98,16 @@ impl ComparePanel {
             },
         );
         let git_store = project.read(cx).git_store().clone();
-        let git_store_subscription =
-            cx.subscribe(&git_store, |this, _, event: &GitStoreEvent, cx| match event {
+        let git_store_subscription = cx.subscribe(
+            &git_store,
+            |this, _, event: &GitStoreEvent, cx| match event {
                 GitStoreEvent::ActiveRepositoryChanged(_) | GitStoreEvent::RepositoryAdded => {
                     this.ensure_default_base(cx);
                 }
                 GitStoreEvent::RepositoryUpdated(_, _, true) => this.refresh_entries(cx),
                 _ => {}
-            });
+            },
+        );
 
         let mut this = Self {
             fs: project.read(cx).fs().clone(),
@@ -133,8 +135,7 @@ impl ComparePanel {
         let Some(repository) = self.repository(cx) else {
             return;
         };
-        let default_branch =
-            repository.update(cx, |repository, _| repository.default_branch(true));
+        let default_branch = repository.update(cx, |repository, _| repository.default_branch(true));
         cx.spawn(async move |this, cx| {
             let Some(base_ref) = default_branch.await?? else {
                 return anyhow::Ok(());
@@ -234,6 +235,17 @@ impl ComparePanel {
         .detach_and_log_err(cx);
     }
 
+    fn refresh(&mut self, cx: &mut Context<Self>) {
+        if let Some(repository) = self.repository(cx) {
+            repository.update(cx, |repository, cx| repository.rescan(cx));
+        }
+        if let Some(diff_buffer_list) = &self.diff_buffer_list {
+            diff_buffer_list.update(cx, |diff_buffer_list, _| diff_buffer_list.reload());
+        }
+        self.refresh_diff_stats(cx);
+        cx.notify();
+    }
+
     fn choose_base(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(repository) = self.repository(cx) else {
             return;
@@ -241,7 +253,10 @@ impl ComparePanel {
         let branches = repository.update(cx, |repository, _| repository.branches());
         let commits = repository.update(cx, |repository, _| repository.log_commits(0, Some(500)));
         cx.spawn_in(window, async move |this, cx| {
-            let branches = branches.await?.map(|scan| scan.branches).unwrap_or_default();
+            let branches = branches
+                .await?
+                .map(|scan| scan.branches)
+                .unwrap_or_default();
             let commits = commits.await??;
 
             let mut options = Vec::with_capacity(branches.len() + commits.len());
@@ -291,10 +306,9 @@ impl ComparePanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let (Some(base_ref), Some(project_path)) = (
-            self.base_ref.clone(),
-            self.project_path_for(&repo_path, cx),
-        ) else {
+        let (Some(base_ref), Some(project_path)) =
+            (self.base_ref.clone(), self.project_path_for(&repo_path, cx))
+        else {
             return;
         };
 
@@ -351,14 +365,7 @@ impl ComparePanel {
                 self.workspace
                     .update(cx, |workspace, cx| {
                         BranchDiff::deploy_branch_diff_with_base_ref(
-                            workspace,
-                            project,
-                            repository,
-                            base_ref,
-                            None,
-                            path_key,
-                            window,
-                            cx,
+                            workspace, project, repository, base_ref, None, path_key, window, cx,
                         );
                     })
                     .ok();
@@ -424,9 +431,7 @@ impl ComparePanel {
             }
 
             let project_path_for = |repo_path: &RepoPath, cx: &App| {
-                repository
-                    .read(cx)
-                    .repo_path_to_project_path(repo_path, cx)
+                repository.read(cx).repo_path_to_project_path(repo_path, cx)
             };
 
             if !to_restore.is_empty() {
@@ -584,11 +589,23 @@ impl Render for ComparePanel {
                             })),
                     )
                     .child(
-                        Button::new("choose-compare-base", "Change")
-                            .label_size(LabelSize::Small)
-                            .tooltip(Tooltip::text("Choose a branch or commit to compare against"))
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.choose_base(window, cx)),
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                IconButton::new("refresh-compare", IconName::ArrowCircle)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(Tooltip::text("Refresh Git State"))
+                                    .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
+                            )
+                            .child(
+                                Button::new("choose-compare-base", "Change")
+                                    .label_size(LabelSize::Small)
+                                    .tooltip(Tooltip::text(
+                                        "Choose a branch or commit to compare against",
+                                    ))
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.choose_base(window, cx)
+                                    })),
                             ),
                     ),
             )
@@ -596,13 +613,11 @@ impl Render for ComparePanel {
                 if self.diff_buffer_list.is_some() {
                     el.child(self.file_tree.clone())
                 } else {
-                    el.child(
-                        v_flex().size_full().items_center().justify_center().child(
-                            Button::new("pick-compare-base", "Choose a branch or commit…").on_click(
-                                cx.listener(|this, _, window, cx| this.choose_base(window, cx)),
-                            ),
+                    el.child(v_flex().size_full().items_center().justify_center().child(
+                        Button::new("pick-compare-base", "Choose a branch or commit…").on_click(
+                            cx.listener(|this, _, window, cx| this.choose_base(window, cx)),
                         ),
-                    )
+                    ))
                 }
             })
     }
