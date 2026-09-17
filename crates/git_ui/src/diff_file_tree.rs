@@ -11,7 +11,7 @@ use gpui::{
     MouseDownEvent, Point, ScrollStrategy, SharedString, Subscription, UniformListScrollHandle,
     Window, anchored, deferred, uniform_list,
 };
-use ui::{ContextMenu, DiffStat, ListItem, prelude::*};
+use ui::{ContextMenu, ContextMenuEntry, DiffStat, ListItem, prelude::*};
 
 use crate::git_status_icon;
 
@@ -31,12 +31,19 @@ pub struct DiffTreeEntry {
     pub repo_path: RepoPath,
     pub status: FileStatus,
     pub diff_stat: Option<git::status::DiffStat>,
+    /// Whether the working tree differs from HEAD for this file, which is what
+    /// discarding changes can act on.
+    pub has_worktree_changes: bool,
 }
 
 pub enum DiffFileTreeEvent {
     OpenEntry {
         repo_path: RepoPath,
         target: OpenTarget,
+    },
+    DiscardChanges {
+        repo_paths: Vec<RepoPath>,
+        scope: SharedString,
     },
 }
 
@@ -99,6 +106,7 @@ impl DiffFileTree {
                 .all(|(old, new)| {
                     old.repo_path == new.repo_path
                         && old.status == new.status
+                        && old.has_worktree_changes == new.has_worktree_changes
                         && old.diff_stat.map(|stat| (stat.added, stat.deleted))
                             == new.diff_stat.map(|stat| (stat.added, stat.deleted))
                 })
@@ -244,6 +252,15 @@ impl DiffFileTree {
         cx: &mut Context<Self>,
     ) {
         let this = cx.entity().downgrade();
+        let can_discard = self
+            .entries
+            .iter()
+            .any(|entry| entry.repo_path == repo_path && entry.has_worktree_changes);
+        let file_name: SharedString = repo_path
+            .file_name()
+            .unwrap_or_default()
+            .to_string()
+            .into();
         let context_menu = ContextMenu::build(window, cx, move |context_menu, _, _| {
             let entry = |context_menu: ContextMenu, label: &'static str, target: OpenTarget| {
                 let this = this.clone();
@@ -257,9 +274,71 @@ impl DiffFileTree {
             };
             let context_menu = entry(context_menu, "Open File", OpenTarget::File);
             let context_menu = entry(context_menu, "Open as Singlebuffer", OpenTarget::SingleBuffer);
-            entry(context_menu, "Open as Multibuffer", OpenTarget::MultiBuffer)
+            let context_menu = entry(context_menu, "Open as Multibuffer", OpenTarget::MultiBuffer);
+            context_menu.separator().item(
+                ContextMenuEntry::new("Discard Changes")
+                    .disabled(!can_discard)
+                    .handler({
+                        let this = this.clone();
+                        let repo_path = repo_path.clone();
+                        move |_, cx| {
+                            this.update(cx, |_, cx| {
+                                cx.emit(DiffFileTreeEvent::DiscardChanges {
+                                    repo_paths: vec![repo_path.clone()],
+                                    scope: file_name.clone(),
+                                });
+                            })
+                            .ok();
+                        }
+                    }),
+            )
         });
 
+        self.set_context_menu(context_menu, position, window, cx);
+    }
+
+    fn deploy_dir_context_menu(
+        &mut self,
+        dir_path: SharedString,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let prefix = format!("{dir_path}/");
+        let repo_paths = self
+            .entries
+            .iter()
+            .filter(|entry| {
+                entry.has_worktree_changes && entry.repo_path.as_unix_str().starts_with(&prefix)
+            })
+            .map(|entry| entry.repo_path.clone())
+            .collect::<Vec<_>>();
+        let this = cx.entity().downgrade();
+        let context_menu = ContextMenu::build(window, cx, move |context_menu, _, _| {
+            context_menu.item(
+                ContextMenuEntry::new("Discard Changes in Folder")
+                    .disabled(repo_paths.is_empty())
+                    .handler(move |_, cx| {
+                        this.update(cx, |_, cx| {
+                            cx.emit(DiffFileTreeEvent::DiscardChanges {
+                                repo_paths: repo_paths.clone(),
+                                scope: dir_path.clone(),
+                            });
+                        })
+                        .ok();
+                    }),
+            )
+        });
+        self.set_context_menu(context_menu, position, window, cx);
+    }
+
+    fn set_context_menu(
+        &mut self,
+        context_menu: Entity<ContextMenu>,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let subscription = cx.subscribe_in(
             &context_menu,
             window,
@@ -303,10 +382,16 @@ impl DiffFileTree {
     ) -> AnyElement {
         let expanded = !self.collapsed_dirs.contains(path);
         let path = path.clone();
+        let menu_path = path.clone();
         ListItem::new(ix)
             .indent_level(depth)
             .indent_step_size(px(12.))
             .on_click(cx.listener(move |this, _, _, cx| this.toggle_dir(&path, cx)))
+            .on_secondary_mouse_down(cx.listener(
+                move |this, event: &MouseDownEvent, window, cx| {
+                    this.deploy_dir_context_menu(menu_path.clone(), event.position, window, cx);
+                },
+            ))
             .child(
                 h_flex()
                     .gap_1()
