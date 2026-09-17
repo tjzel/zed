@@ -117,8 +117,12 @@ and the tree are new.
 - Each row shows its added/deleted line counts, and the header shows the totals. The diff's file list
   carries no line counts for a merge base, so they come from one `git diff --numstat --merge-base`
   per comparison, via a new `DiffStatType::MergeBase` and `Repository::merge_base_diff_stat`.
+- The base defaults to the repository's default branch (`origin/main` when a remote exists) until
+  you pick another one.
 - Click opens the file in the multibuffer diff, scrolled to it. Right-click offers **Open File**,
-  **Open as Singlebuffer**, and **Open as Multibuffer**.
+  **Open as Singlebuffer**, **Open as Multibuffer**, and **Discard Changes**; right-click on a folder
+  offers **Discard Changes in Folder**. Discarding restores working-tree files to HEAD after a
+  confirmation and never touches the comparison base.
 - The file list comes from upstream's `DiffBufferList` model, so it refreshes as the working tree
   changes.
 
@@ -148,6 +152,9 @@ Untracked Files** still acted on the whole repository while sitting in a folder'
 
 - `Trash Untracked Files` and `Stage`/`Unstage` now act on the folder's descendants when the menu was
   opened on a folder, reusing upstream's `directory_context_descendants()`.
+- **Behavior change:** `Restore`/`Discard Tracked Changes` covers unstaged tracked changes too.
+  Upstream (#62872) restricts it to *staged* tracked changes, so the folder entry is disabled for a
+  folder with only unstaged edits. The two upstream tests encoding that rule were updated.
 - Folder menus relabel accordingly (`Stage Folder`, `Trash Untracked Files in Folder`, …) and the
   trash confirmation names the folder, so the scope is visible before confirming.
 

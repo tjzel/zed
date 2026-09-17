@@ -5,12 +5,12 @@ use anyhow::Result;
 use git::repository::RepoPath;
 use gpui::{
     App, AsyncWindowContext, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
-    Render, SharedString, Subscription, WeakEntity, Window, actions,
+    PromptLevel, Render, SharedString, Subscription, WeakEntity, Window, actions,
 };
 use project::{
     Fs, Project, ProjectPath,
     git_store::{
-        Repository,
+        GitStoreEvent, Repository,
         diff_buffer_list::{BranchDiffEvent, DiffBase, DiffBufferList},
     },
 };
@@ -62,6 +62,7 @@ pub struct ComparePanel {
     fs: Arc<dyn Fs>,
     focus_handle: FocusHandle,
     _tree_subscription: Subscription,
+    _git_store_subscription: Subscription,
     _diff_subscription: Option<Subscription>,
 }
 
@@ -91,10 +92,22 @@ impl ComparePanel {
                 DiffFileTreeEvent::OpenEntry { repo_path, target } => {
                     this.open_entry(repo_path.clone(), *target, window, cx);
                 }
+                DiffFileTreeEvent::DiscardChanges { repo_paths, scope } => {
+                    this.discard_changes(repo_paths.clone(), scope.clone(), window, cx);
+                }
             },
         );
+        let git_store = project.read(cx).git_store().clone();
+        let git_store_subscription =
+            cx.subscribe(&git_store, |this, _, event: &GitStoreEvent, cx| match event {
+                GitStoreEvent::ActiveRepositoryChanged(_) | GitStoreEvent::RepositoryAdded => {
+                    this.ensure_default_base(cx);
+                }
+                GitStoreEvent::RepositoryUpdated(_, _, true) => this.refresh_entries(cx),
+                _ => {}
+            });
 
-        Self {
+        let mut this = Self {
             fs: project.read(cx).fs().clone(),
             project,
             workspace,
@@ -104,8 +117,36 @@ impl ComparePanel {
             file_tree,
             focus_handle: cx.focus_handle(),
             _tree_subscription: tree_subscription,
+            _git_store_subscription: git_store_subscription,
             _diff_subscription: None,
+        };
+        this.ensure_default_base(cx);
+        this
+    }
+
+    /// Until the user picks a base, compare against the repository's default
+    /// branch, resolved through the remote when it has one.
+    fn ensure_default_base(&mut self, cx: &mut Context<Self>) {
+        if self.base_ref.is_some() {
+            return;
         }
+        let Some(repository) = self.repository(cx) else {
+            return;
+        };
+        let default_branch =
+            repository.update(cx, |repository, _| repository.default_branch(true));
+        cx.spawn(async move |this, cx| {
+            let Some(base_ref) = default_branch.await?? else {
+                return anyhow::Ok(());
+            };
+            this.update(cx, |this, cx| {
+                if this.base_ref.is_none() {
+                    this.set_base(base_ref, cx);
+                }
+            })?;
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 
     fn repository(&self, cx: &App) -> Option<Entity<Repository>> {
@@ -146,6 +187,7 @@ impl ComparePanel {
         let Some(diff_buffer_list) = self.diff_buffer_list.as_ref() else {
             return;
         };
+        let repository = self.repository(cx);
         let entries = diff_buffer_list
             .read(cx)
             .statuses_by_path()
@@ -154,6 +196,12 @@ impl ComparePanel {
                     .iter()
                     .map(|status| DiffTreeEntry {
                         diff_stat: self.diff_stats.get(&status.repo_path).copied(),
+                        has_worktree_changes: repository.as_ref().is_some_and(|repository| {
+                            repository
+                                .read(cx)
+                                .status_for_path(&status.repo_path)
+                                .is_some_and(|entry| !entry.status.is_created())
+                        }),
                         repo_path: status.repo_path.clone(),
                         status: status.status,
                     })
@@ -316,6 +364,75 @@ impl ComparePanel {
                     .ok();
             }
         }
+    }
+
+    /// Restores the working tree copies of `repo_paths` to HEAD after the user
+    /// confirms. Only uncommitted changes are discarded; the comparison base is
+    /// not involved, since reverting committed work from a review view would be
+    /// surprising and is what `git checkout <base>` is for.
+    fn discard_changes(
+        &mut self,
+        repo_paths: Vec<RepoPath>,
+        scope: SharedString,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(repository) = self.repository(cx) else {
+            return;
+        };
+        if repo_paths.is_empty() {
+            return;
+        }
+        let message = if repo_paths.len() == 1 {
+            format!("Discard uncommitted changes to {scope}?")
+        } else {
+            format!(
+                "Discard uncommitted changes to {} files in {scope}?",
+                repo_paths.len()
+            )
+        };
+        let details = repo_paths
+            .iter()
+            .filter_map(|repo_path| repo_path.file_name())
+            .take(5)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let answer = window.prompt(
+            PromptLevel::Warning,
+            &message,
+            Some(&details),
+            &["Discard Changes", "Cancel"],
+            cx,
+        );
+        let project = self.project.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            if answer.await? != 0 {
+                return anyhow::Ok(());
+            }
+            let buffers = cx.update(|_, cx| {
+                project.update(cx, |project, cx| {
+                    repo_paths
+                        .iter()
+                        .filter_map(|repo_path| {
+                            let project_path = repository
+                                .read(cx)
+                                .repo_path_to_project_path(repo_path, cx)?;
+                            Some(project.open_buffer(project_path, cx))
+                        })
+                        .collect::<Vec<_>>()
+                })
+            })?;
+            futures::future::join_all(buffers).await;
+            cx.update(|_, cx| {
+                repository.update(cx, |repository, cx| {
+                    repository.checkout_files("HEAD", repo_paths, cx)
+                })
+            })?
+            .await?;
+            this.update(cx, |this, cx| this.refresh_entries(cx))?;
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 
     fn project_path_for(&self, repo_path: &RepoPath, cx: &App) -> Option<ProjectPath> {
