@@ -200,7 +200,7 @@ impl ComparePanel {
                             repository
                                 .read(cx)
                                 .status_for_path(&status.repo_path)
-                                .is_some_and(|entry| !entry.status.is_created())
+                                .is_some()
                         }),
                         repo_path: status.repo_path.clone(),
                         status: status.status,
@@ -366,10 +366,12 @@ impl ComparePanel {
         }
     }
 
-    /// Restores the working tree copies of `repo_paths` to HEAD after the user
-    /// confirms. Only uncommitted changes are discarded; the comparison base is
-    /// not involved, since reverting committed work from a review view would be
-    /// surprising and is what `git checkout <base>` is for.
+    /// Discards uncommitted changes to `repo_paths` after the user confirms:
+    /// modified and deleted files are restored from HEAD, and files that do
+    /// not exist in HEAD are removed. A rename appears as one of each, so the
+    /// old path comes back and the new one goes away. The comparison base is
+    /// never involved, since reverting committed work from a review view would
+    /// be surprising.
     fn discard_changes(
         &mut self,
         repo_paths: Vec<RepoPath>,
@@ -380,19 +382,30 @@ impl ComparePanel {
         let Some(repository) = self.repository(cx) else {
             return;
         };
-        if repo_paths.is_empty() {
+        let (to_remove, to_restore): (Vec<RepoPath>, Vec<RepoPath>) =
+            repo_paths.into_iter().partition(|repo_path| {
+                repository
+                    .read(cx)
+                    .status_for_path(repo_path)
+                    .is_some_and(|entry| entry.status.is_created())
+            });
+        if to_remove.is_empty() && to_restore.is_empty() {
             return;
         }
-        let message = if repo_paths.len() == 1 {
-            format!("Discard uncommitted changes to {scope}?")
-        } else {
-            format!(
-                "Discard uncommitted changes to {} files in {scope}?",
-                repo_paths.len()
-            )
+
+        let count = to_remove.len() + to_restore.len();
+        let message = match (count, to_remove.is_empty(), to_restore.is_empty()) {
+            (1, false, _) => format!("Remove {scope}? It does not exist in HEAD."),
+            (1, _, false) => format!("Discard uncommitted changes to {scope}?"),
+            (_, false, false) => format!(
+                "Discard uncommitted changes to {count} files in {scope}? New files are removed."
+            ),
+            (_, false, true) => format!("Remove {count} new files in {scope}?"),
+            _ => format!("Discard uncommitted changes to {count} files in {scope}?"),
         };
-        let details = repo_paths
+        let details = to_restore
             .iter()
+            .chain(&to_remove)
             .filter_map(|repo_path| repo_path.file_name())
             .take(5)
             .collect::<Vec<_>>()
@@ -409,26 +422,55 @@ impl ComparePanel {
             if answer.await? != 0 {
                 return anyhow::Ok(());
             }
-            let buffers = cx.update(|_, cx| {
-                project.update(cx, |project, cx| {
-                    repo_paths
-                        .iter()
-                        .filter_map(|repo_path| {
-                            let project_path = repository
-                                .read(cx)
-                                .repo_path_to_project_path(repo_path, cx)?;
-                            Some(project.open_buffer(project_path, cx))
-                        })
-                        .collect::<Vec<_>>()
-                })
-            })?;
-            futures::future::join_all(buffers).await;
-            cx.update(|_, cx| {
-                repository.update(cx, |repository, cx| {
-                    repository.checkout_files("HEAD", repo_paths, cx)
-                })
-            })?
-            .await?;
+
+            let project_path_for = |repo_path: &RepoPath, cx: &App| {
+                repository
+                    .read(cx)
+                    .repo_path_to_project_path(repo_path, cx)
+            };
+
+            if !to_restore.is_empty() {
+                let buffers = cx.update(|_, cx| {
+                    project.update(cx, |project, cx| {
+                        to_restore
+                            .iter()
+                            .filter_map(|repo_path| {
+                                Some(project.open_buffer(project_path_for(repo_path, cx)?, cx))
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                })?;
+                futures::future::join_all(buffers).await;
+                cx.update(|_, cx| {
+                    repository.update(cx, |repository, cx| {
+                        repository.checkout_files("HEAD", to_restore, cx)
+                    })
+                })?
+                .await?;
+            }
+
+            if !to_remove.is_empty() {
+                let removals = cx.update(|_, cx| {
+                    project.update(cx, |project, cx| {
+                        to_remove
+                            .iter()
+                            .filter_map(|repo_path| {
+                                project.delete_file(project_path_for(repo_path, cx)?, cx)
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                })?;
+                for removal in removals {
+                    removal.await?;
+                }
+                cx.update(|_, cx| {
+                    repository.update(cx, |repository, cx| {
+                        repository.unstage_entries(to_remove, cx)
+                    })
+                })?
+                .await?;
+            }
+
             this.update(cx, |this, cx| this.refresh_entries(cx))?;
             anyhow::Ok(())
         })
