@@ -121,8 +121,11 @@ and the tree are new.
   you pick another one.
 - Click opens the file in the multibuffer diff, scrolled to it. Right-click offers **Open File**,
   **Open as Singlebuffer**, **Open as Multibuffer**, and **Discard Changes**; right-click on a folder
-  offers **Discard Changes in Folder**. Discarding restores working-tree files to HEAD after a
-  confirmation and never touches the comparison base.
+  offers **Discard Changes in Folder**. Discarding acts on uncommitted changes only, after a
+  confirmation: modified and deleted files are restored from HEAD, files that do not exist in HEAD
+  are removed (and unstaged if they were added to the index). Because the file list is built with
+  `--no-renames`, a moved file appears as a deletion plus an addition, so discarding a folder moves
+  it back and restores its contents. The comparison base is never involved.
 - The file list comes from upstream's `DiffBufferList` model, so it refreshes as the working tree
   changes.
 
