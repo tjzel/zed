@@ -68,7 +68,10 @@ impl SoloDiffView {
         let existing = workspace_entity
             .read(cx)
             .items_of_type::<SoloDiffView>(cx)
-            .find(|item| item.read(cx).matches(&repository, &entry.repo_path, None, cx));
+            .find(|item| {
+                item.read(cx)
+                    .matches(&repository, &entry.repo_path, None, cx)
+            });
         if let Some(existing) = existing {
             workspace_entity.update(cx, |workspace, cx| {
                 workspace.activate_item(&existing, true, true, window, cx);
@@ -471,7 +474,8 @@ impl Item for SoloDiffView {
     }
 
     fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
-        let name: SharedString = self.buffer
+        let name: SharedString = self
+            .buffer
             .read(cx)
             .file()
             .and_then(|file| {
@@ -490,7 +494,9 @@ impl Item for SoloDiffView {
             })
             .into();
         match &self.base_ref {
-            Some(base_ref) => format!("{name} ↔ {}", crate::compare_panel::short_ref(base_ref)).into(),
+            Some(base_ref) => {
+                format!("{name} ↔ {}", crate::compare_panel::short_ref(base_ref)).into()
+            }
             None => name,
         }
     }

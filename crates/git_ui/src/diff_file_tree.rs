@@ -99,17 +99,13 @@ impl DiffFileTree {
     pub fn set_entries(&mut self, mut entries: Vec<DiffTreeEntry>, cx: &mut Context<Self>) {
         entries.sort_by(|a, b| a.repo_path.cmp(&b.repo_path));
         if self.entries.len() == entries.len()
-            && self
-                .entries
-                .iter()
-                .zip(&entries)
-                .all(|(old, new)| {
-                    old.repo_path == new.repo_path
-                        && old.status == new.status
-                        && old.has_worktree_changes == new.has_worktree_changes
-                        && old.diff_stat.map(|stat| (stat.added, stat.deleted))
-                            == new.diff_stat.map(|stat| (stat.added, stat.deleted))
-                })
+            && self.entries.iter().zip(&entries).all(|(old, new)| {
+                old.repo_path == new.repo_path
+                    && old.status == new.status
+                    && old.has_worktree_changes == new.has_worktree_changes
+                    && old.diff_stat.map(|stat| (stat.added, stat.deleted))
+                        == new.diff_stat.map(|stat| (stat.added, stat.deleted))
+            })
         {
             return;
         }
@@ -142,12 +138,15 @@ impl DiffFileTree {
         }
         self.active_path = active_path;
         if let Some(active_path) = &self.active_path
-            && let Some(visible_ix) = self.visible_rows.iter().position(|row_ix| {
-                match &self.rows[*row_ix].kind {
-                    RowKind::File { entry_ix } => self.entries[*entry_ix].repo_path == *active_path,
-                    RowKind::Dir { .. } => false,
-                }
-            })
+            && let Some(visible_ix) =
+                self.visible_rows
+                    .iter()
+                    .position(|row_ix| match &self.rows[*row_ix].kind {
+                        RowKind::File { entry_ix } => {
+                            self.entries[*entry_ix].repo_path == *active_path
+                        }
+                        RowKind::Dir { .. } => false,
+                    })
         {
             self.scroll_handle
                 .scroll_to_item(visible_ix, ScrollStrategy::Center);
@@ -256,11 +255,7 @@ impl DiffFileTree {
             .entries
             .iter()
             .any(|entry| entry.repo_path == repo_path && entry.has_worktree_changes);
-        let file_name: SharedString = repo_path
-            .file_name()
-            .unwrap_or_default()
-            .to_string()
-            .into();
+        let file_name: SharedString = repo_path.file_name().unwrap_or_default().to_string().into();
         let context_menu = ContextMenu::build(window, cx, move |context_menu, _, _| {
             let entry = |context_menu: ContextMenu, label: &'static str, target: OpenTarget| {
                 let this = this.clone();
@@ -273,7 +268,11 @@ impl DiffFileTree {
                 })
             };
             let context_menu = entry(context_menu, "Open File", OpenTarget::File);
-            let context_menu = entry(context_menu, "Open as Singlebuffer", OpenTarget::SingleBuffer);
+            let context_menu = entry(
+                context_menu,
+                "Open as Singlebuffer",
+                OpenTarget::SingleBuffer,
+            );
             let context_menu = entry(context_menu, "Open as Multibuffer", OpenTarget::MultiBuffer);
             context_menu.separator().item(
                 ContextMenuEntry::new("Discard Changes")
@@ -470,8 +469,12 @@ impl DiffFileTree {
                     ),
             )
             .end_slot::<AnyElement>(entry.diff_stat.map(|stat| {
-                DiffStat::new(("diff-stat", ix), stat.added as usize, stat.deleted as usize)
-                    .into_any_element()
+                DiffStat::new(
+                    ("diff-stat", ix),
+                    stat.added as usize,
+                    stat.deleted as usize,
+                )
+                .into_any_element()
             }))
             .into_any_element()
     }
