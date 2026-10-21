@@ -118,10 +118,12 @@ and the tree are new.
   carries no line counts for a merge base, so they come from one `git diff --numstat --merge-base`
   per comparison, via a new `DiffStatType::MergeBase` and `Repository::merge_base_diff_stat`.
 - Each file row has a **viewed** checkbox for reviewing. Marks are keyed by the diff's fingerprint
-  (base blob plus working-tree blob, the two hashes `git diff --raw` prints), so when a file's diff
-  changes after it was marked the checkbox turns indeterminate until it is reviewed again. Marks
-  persist per workspace and base ref in the key-value store. To carry the fingerprint,
-  `TreeDiffStatus::Added`/`Modified` now keep the new-side oid that upstream's parser discarded.
+  (base blob plus working-tree blob), so when a file's diff changes after it was marked the checkbox
+  turns indeterminate until it is reviewed again. Marks persist per workspace and base ref in the
+  key-value store. To carry the fingerprint, `TreeDiffStatus::Added`/`Modified` now keep the
+  new-side oid that upstream's parser discarded. `git diff --raw` prints a zero oid for every
+  working-tree file whose content is not in the index, so `diff_tree` hashes those files with
+  `git hash-object --stdin-paths` and stores the content hash instead.
 - A refresh button in the header rescans the repository and reloads the comparison; the git panel's
   changes header gets the same button. Zed otherwise only resyncs on file system events.
 - The base defaults to the repository's default branch (`origin/main` when a remote exists) until
@@ -179,7 +181,8 @@ Code's folder scoping and can otherwise discard far more than intended.
 This fork builds as the `stable` channel, so stock auto-update would download an official release and
 install it over the fork. With `LOCAL_BUILD_NOTIFY_ONLY`, update checks still run but stop at a new
 `AutoUpdateStatus::UpdateAvailable`: the title bar shows **Rebuild to Update** with the new version,
-clicking opens that release's notes, and nothing is ever downloaded or installed.
+clicking opens that release's notes, and nothing is ever downloaded or installed. Upstream's
+`test_auto_update_downloads` asserts the notify-only status and returns before the download steps.
 
 ## Local build script fixes
 

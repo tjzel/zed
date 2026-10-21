@@ -2004,6 +2004,44 @@ impl GitRepository for RealGitRepository {
                 let Some(working_directory) = working_directory else {
                     return Ok(tree_diff);
                 };
+                let unhashed: Vec<RepoPath> = tree_diff
+                    .entries
+                    .iter()
+                    .filter(|(_, status)| {
+                        !matches!(status, TreeDiffStatus::Deleted { .. })
+                            && status.new_oid() == Oid::default()
+                    })
+                    .map(|(path, _)| path.clone())
+                    .collect();
+                for chunk in unhashed.chunks(256) {
+                    let mut child = git
+                        .build_command(&["hash-object", "--stdin-paths"])
+                        .stdin(Stdio::piped())
+                        .stdout(Stdio::piped())
+                        .spawn()?;
+                    let mut stdin = child.stdin.take().context("hash-object has no stdin")?;
+                    for path in chunk {
+                        stdin.write_all(path.as_unix_str().as_bytes()).await?;
+                        stdin.write_all(b"\n").await?;
+                    }
+                    stdin.flush().await?;
+                    drop(stdin);
+                    let hash_output = child.output().await?;
+                    if !hash_output.status.success() {
+                        continue;
+                    }
+                    let stdout = String::from_utf8_lossy(&hash_output.stdout);
+                    for (path, line) in chunk.iter().zip(stdout.lines()) {
+                        let Ok(hashed) = line.trim().parse::<Oid>() else {
+                            continue;
+                        };
+                        match tree_diff.entries.get_mut(path) {
+                            Some(TreeDiffStatus::Added { new })
+                            | Some(TreeDiffStatus::Modified { new, .. }) => *new = hashed,
+                            _ => {}
+                        }
+                    }
+                }
                 if !tree_diff
                     .entries
                     .values()
@@ -5560,7 +5598,10 @@ mod tests {
             TreeDiff {
                 entries: HashMap::from_iter([(
                     RepoPath::new("docs/rewrite/notes.md").unwrap(),
-                    TreeDiffStatus::Modified { old: base_oid },
+                    TreeDiffStatus::Modified {
+                        old: base_oid,
+                        new: "7663aa741bec2b1328630882586fb7a2cbc8a255".parse().unwrap(),
+                    },
                 )]),
             }
         );

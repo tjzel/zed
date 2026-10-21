@@ -165,8 +165,10 @@ pub(crate) fn apply_replacements(layout: &mut LineLayout, replacements: Vec<Repl
     layout.width += shift;
 
     let source_run_count = layout.runs.len();
+    let font_size = layout.font_size;
     layout.runs.resize_with(final_run_count, || ShapedRun {
         font_id: FontId(0),
+        font_size,
         glyphs: Vec::new(),
     });
 
@@ -183,6 +185,7 @@ pub(crate) fn apply_replacements(layout: &mut LineLayout, replacements: Vec<Repl
                 layout.runs.swap(source_index, destination_index);
             } else {
                 let glyph_start = glyph_end - segment.length;
+                let font_size = layout.runs[source_index].font_size;
                 let mut glyphs = spare_buffers.pop().unwrap_or_default();
                 glyphs.extend(
                     layout.runs[source_index]
@@ -191,6 +194,7 @@ pub(crate) fn apply_replacements(layout: &mut LineLayout, replacements: Vec<Repl
                 );
                 layout.runs[destination_index] = ShapedRun {
                     font_id: segment.font_id,
+                    font_size,
                     glyphs,
                 };
                 glyph_end = glyph_start;
@@ -375,6 +379,7 @@ mod tests {
                 index += length;
                 ShapedRun {
                     font_id: FontId(font),
+                    font_size: px(14.0),
                     glyphs,
                 }
             })
@@ -439,6 +444,7 @@ mod tests {
             } else {
                 layout.runs.push(ShapedRun {
                     font_id,
+                    font_size: layout.font_size,
                     glyphs: vec![glyph],
                 });
             }

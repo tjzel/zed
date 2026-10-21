@@ -315,6 +315,7 @@ impl<'a> ShapedLineCursor<'a> {
             if start < end {
                 runs.push(crate::ShapedRun {
                     font_id: run.font_id,
+                    font_size: run.font_size,
                     glyphs: run.glyphs[start..end]
                         .iter()
                         .map(|glyph| crate::ShapedGlyph {
@@ -1737,6 +1738,7 @@ mod tests {
                 runs: vec![
                     ShapedRun {
                         font_id: FontId(3),
+                        font_size: px(16.0),
                         glyphs: vec![
                             ShapedGlyph {
                                 id: GlyphId(11),
@@ -1760,6 +1762,7 @@ mod tests {
                     },
                     ShapedRun {
                         font_id: FontId(8),
+                        font_size: px(16.0),
                         glyphs: vec![
                             ShapedGlyph {
                                 id: GlyphId(21),

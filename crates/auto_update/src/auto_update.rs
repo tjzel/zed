@@ -1483,6 +1483,15 @@ mod tests {
             }
         }
         let status = auto_updater.read_with(cx, |updater, _| updater.status());
+        if LOCAL_BUILD_NOTIFY_ONLY {
+            assert_eq!(
+                status,
+                AutoUpdateStatus::UpdateAvailable {
+                    version: semver::Version::new(0, 100, 1),
+                }
+            );
+            return;
+        }
         assert_eq!(
             status,
             AutoUpdateStatus::Downloading {
