@@ -353,10 +353,15 @@ impl GitRepository for FakeGitRepository {
                         if state.oids.get(oid).context("merge-base blob is missing")? == content {
                             continue;
                         }
-                        TreeDiffStatus::Modified { old: *oid }
+                        TreeDiffStatus::Modified {
+                            old: *oid,
+                            new: git::Oid::default(),
+                        }
                     }
                     (Some(oid), None) => TreeDiffStatus::Deleted { old: *oid },
-                    (None, Some(_)) => TreeDiffStatus::Added,
+                    (None, Some(_)) => TreeDiffStatus::Added {
+                        new: git::Oid::default(),
+                    },
                     (None, None) => continue,
                 };
                 entries.insert(path.clone(), status);

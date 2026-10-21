@@ -117,6 +117,11 @@ and the tree are new.
 - Each row shows its added/deleted line counts, and the header shows the totals. The diff's file list
   carries no line counts for a merge base, so they come from one `git diff --numstat --merge-base`
   per comparison, via a new `DiffStatType::MergeBase` and `Repository::merge_base_diff_stat`.
+- Each file row has a **viewed** checkbox for reviewing. Marks are keyed by the diff's fingerprint
+  (base blob plus working-tree blob, the two hashes `git diff --raw` prints), so when a file's diff
+  changes after it was marked the checkbox turns indeterminate until it is reviewed again. Marks
+  persist per workspace and base ref in the key-value store. To carry the fingerprint,
+  `TreeDiffStatus::Added`/`Modified` now keep the new-side oid that upstream's parser discarded.
 - A refresh button in the header rescans the repository and reloads the comparison; the git panel's
   changes header gets the same button. Zed otherwise only resyncs on file system events.
 - The base defaults to the repository's default branch (`origin/main` when a remote exists) until

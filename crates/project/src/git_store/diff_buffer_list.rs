@@ -212,6 +212,17 @@ impl DiffBufferList {
         self.statuses_by_path.clone()
     }
 
+    /// Identifies the current diff of `path` against the base: the base blob
+    /// and the working-tree blob. It changes whenever either side does.
+    pub fn diff_fingerprint_for_path(&self, path: &RepoPath) -> Option<String> {
+        let status = self.tree_diff.as_ref()?.entries.get(path)?;
+        let old = match status {
+            TreeDiffStatus::Modified { old, .. } | TreeDiffStatus::Deleted { old } => *old,
+            TreeDiffStatus::Added { .. } => git::Oid::default(),
+        };
+        Some(format!("{old}..{}", status.new_oid()))
+    }
+
     pub fn base_oid_for_path(&self, path: &RepoPath) -> Option<Option<git::Oid>> {
         let status = self
             .tree_diff
@@ -223,8 +234,8 @@ impl DiffBufferList {
                     .and_then(|diff| diff.entries.get(path))
             })?;
         Some(match status {
-            TreeDiffStatus::Added => None,
-            TreeDiffStatus::Modified { old } | TreeDiffStatus::Deleted { old } => Some(*old),
+            TreeDiffStatus::Added { .. } => None,
+            TreeDiffStatus::Modified { old, .. } | TreeDiffStatus::Deleted { old } => Some(*old),
         })
     }
 

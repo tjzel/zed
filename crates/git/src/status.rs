@@ -519,9 +519,21 @@ pub struct TreeDiff {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TreeDiffStatus {
-    Added,
-    Modified { old: Oid },
+    Added { new: Oid },
+    Modified { old: Oid, new: Oid },
     Deleted { old: Oid },
+}
+
+impl TreeDiffStatus {
+    /// Hash of the file's contents on the "new" side of the diff. For a
+    /// worktree diff this is the current file, so it changes whenever the
+    /// file does; it is the null oid for a deleted file.
+    pub fn new_oid(&self) -> Oid {
+        match self {
+            TreeDiffStatus::Added { new } | TreeDiffStatus::Modified { new, .. } => *new,
+            TreeDiffStatus::Deleted { .. } => Oid::default(),
+        }
+    }
 }
 
 impl FromStr for TreeDiff {
@@ -539,9 +551,11 @@ impl FromStr for TreeDiff {
                 .ok_or_else(|| anyhow!("expected to find old_sha"))?
                 .to_owned()
                 .parse()?;
-            let _new_sha = fields
+            let new_sha: Oid = fields
                 .next()
-                .ok_or_else(|| anyhow!("expected to find new_sha"))?;
+                .ok_or_else(|| anyhow!("expected to find new_sha"))?
+                .to_owned()
+                .parse()?;
             let status = fields
                 .next()
                 .and_then(|s| {
@@ -554,8 +568,11 @@ impl FromStr for TreeDiff {
                 .ok_or_else(|| anyhow!("expected to find status"))?;
 
             let result = match StatusCode::from_byte(*status)? {
-                StatusCode::Modified => TreeDiffStatus::Modified { old: old_sha },
-                StatusCode::Added => TreeDiffStatus::Added,
+                StatusCode::Modified => TreeDiffStatus::Modified {
+                    old: old_sha,
+                    new: new_sha,
+                },
+                StatusCode::Added => TreeDiffStatus::Added { new: new_sha },
                 StatusCode::Deleted => TreeDiffStatus::Deleted { old: old_sha },
                 _status => continue,
             };
@@ -739,7 +756,9 @@ mod tests {
                 entries: [
                     (
                         RepoPath::new(".zed/settings.json").unwrap(),
-                        TreeDiffStatus::Added,
+                        TreeDiffStatus::Added {
+                            new: "0062c311b8727c3a2e3cd7a41bc9904feacf8f98".parse().unwrap()
+                        },
                     ),
                     (
                         RepoPath::new("README.md").unwrap(),
@@ -751,6 +770,7 @@ mod tests {
                         RepoPath::new("parallel.go").unwrap(),
                         TreeDiffStatus::Modified {
                             old: "42f097005a1f21eb2260fad02ec8c991282beee8".parse().unwrap(),
+                            new: "a437d85f63bb8c62bd78f83f40c506631fabf005".parse().unwrap(),
                         }
                     ),
                 ]

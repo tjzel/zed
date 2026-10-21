@@ -1162,7 +1162,9 @@ pub enum DiffStatType {
     HeadToWorktree,
     IndexToWorktree,
     /// Line counts between the merge base of `base_ref` and the working tree.
-    MergeBase { base_ref: SharedString },
+    MergeBase {
+        base_ref: SharedString,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
@@ -2089,13 +2091,6 @@ impl GitRepository for RealGitRepository {
                             "100644"
                         }
                     };
-                    if current_mode != base_mode {
-                        tree_diff
-                            .entries
-                            .insert(path.clone(), TreeDiffStatus::Modified { old });
-                        continue;
-                    }
-
                     let hash_output = if metadata.file_type().is_symlink() {
                         let target = smol::fs::read_link(&full_path).await?;
                         let mut child = git
@@ -2120,16 +2115,35 @@ impl GitRepository for RealGitRepository {
                         .output()
                         .await?
                     };
-                    if !hash_output.status.success() {
+                    let worktree_oid: Option<Oid> = hash_output
+                        .status
+                        .success()
+                        .then(|| {
+                            String::from_utf8_lossy(&hash_output.stdout)
+                                .trim()
+                                .parse()
+                                .ok()
+                        })
+                        .flatten();
+                    if current_mode != base_mode {
+                        tree_diff.entries.insert(
+                            path.clone(),
+                            TreeDiffStatus::Modified {
+                                old,
+                                new: worktree_oid.unwrap_or_default(),
+                            },
+                        );
                         continue;
                     }
-                    let worktree_oid = String::from_utf8_lossy(&hash_output.stdout);
-                    if worktree_oid.trim() == old.to_string() {
+                    let Some(new) = worktree_oid else {
+                        continue;
+                    };
+                    if new == old {
                         tree_diff.entries.remove(&path);
                     } else {
                         tree_diff
                             .entries
-                            .insert(path.clone(), TreeDiffStatus::Modified { old });
+                            .insert(path.clone(), TreeDiffStatus::Modified { old, new });
                     }
                 }
                 Ok(tree_diff)
@@ -4602,7 +4616,10 @@ mod tests {
             TreeDiff {
                 entries: HashMap::from_iter([(
                     RepoPath::new("file.txt").unwrap(),
-                    TreeDiffStatus::Modified { old: base_oid },
+                    TreeDiffStatus::Modified {
+                        old: base_oid,
+                        new: "bf589be5086e19c187c42698ecd9a64452ca5d9e".parse().unwrap(),
+                    },
                 )]),
             }
         );
@@ -4659,7 +4676,10 @@ mod tests {
             TreeDiff {
                 entries: HashMap::from_iter([(
                     RepoPath::new("file.txt").unwrap(),
-                    TreeDiffStatus::Modified { old: base_oid },
+                    TreeDiffStatus::Modified {
+                        old: base_oid,
+                        new: "bf589be5086e19c187c42698ecd9a64452ca5d9e".parse().unwrap(),
+                    },
                 )]),
             }
         );
@@ -4722,7 +4742,10 @@ mod tests {
             TreeDiff {
                 entries: HashMap::from_iter([(
                     RepoPath::new("file.txt").unwrap(),
-                    TreeDiffStatus::Modified { old: base_oid },
+                    TreeDiffStatus::Modified {
+                        old: base_oid,
+                        new: "b96537a6e99a7e80e02ea6049fa3e004700d92d6".parse().unwrap(),
+                    },
                 )]),
             }
         );

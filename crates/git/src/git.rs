@@ -180,14 +180,15 @@ const SHA1_HEX_LENGTH: usize = SHA1_BYTE_LENGTH * 2;
 const SHA256_HEX_LENGTH: usize = SHA256_BYTE_LENGTH * 2;
 const HEX_DIGITS: &[u8; 16] = b"0123456789abcdef";
 
-#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Default, Eq, Hash, PartialEq)]
 pub struct Oid {
     bytes: [u8; SHA256_BYTE_LENGTH],
     format: OidFormat,
 }
 
-#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Eq, Hash, PartialEq, Default)]
 enum OidFormat {
+    #[default]
     Sha1,
     Sha256,
 }

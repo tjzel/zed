@@ -11,7 +11,7 @@ use gpui::{
     MouseDownEvent, Point, ScrollStrategy, SharedString, Subscription, UniformListScrollHandle,
     Window, anchored, deferred, uniform_list,
 };
-use ui::{ContextMenu, ContextMenuEntry, DiffStat, ListItem, prelude::*};
+use ui::{Checkbox, ContextMenu, ContextMenuEntry, DiffStat, ListItem, ToggleState, prelude::*};
 
 use crate::git_status_icon;
 
@@ -34,6 +34,16 @@ pub struct DiffTreeEntry {
     /// Whether the working tree differs from HEAD for this file, which is what
     /// discarding changes can act on.
     pub has_worktree_changes: bool,
+    pub review: ReviewState,
+}
+
+/// Whether the reviewer has looked at the current revision of a file's diff.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ReviewState {
+    NotViewed,
+    Viewed,
+    /// Marked viewed earlier, but the diff has changed since.
+    Stale,
 }
 
 pub enum DiffFileTreeEvent {
@@ -44,6 +54,10 @@ pub enum DiffFileTreeEvent {
     DiscardChanges {
         repo_paths: Vec<RepoPath>,
         scope: SharedString,
+    },
+    SetViewed {
+        repo_path: RepoPath,
+        viewed: bool,
     },
 }
 
@@ -103,6 +117,7 @@ impl DiffFileTree {
                 old.repo_path == new.repo_path
                     && old.status == new.status
                     && old.has_worktree_changes == new.has_worktree_changes
+                    && old.review == new.review
                     && old.diff_stat.map(|stat| (stat.added, stat.deleted))
                         == new.diff_stat.map(|stat| (stat.added, stat.deleted))
             })
@@ -433,6 +448,16 @@ impl DiffFileTree {
         let label_color = file_status_label_color(Some(entry.status));
         let repo_path = entry.repo_path.clone();
         let secondary_repo_path = entry.repo_path.clone();
+        let viewed_repo_path = entry.repo_path.clone();
+        let (toggle_state, tooltip) = match entry.review {
+            ReviewState::NotViewed => (ToggleState::Unselected, "Mark as viewed"),
+            ReviewState::Viewed => (ToggleState::Selected, "Viewed"),
+            ReviewState::Stale => (
+                ToggleState::Indeterminate,
+                "Changed since you viewed it; review it again",
+            ),
+        };
+        let this = cx.entity().downgrade();
         ListItem::new(ix)
             .indent_level(depth + 1)
             .indent_step_size(px(12.))
@@ -468,14 +493,33 @@ impl DiffFileTree {
                             .truncate(),
                     ),
             )
-            .end_slot::<AnyElement>(entry.diff_stat.map(|stat| {
-                DiffStat::new(
-                    ("diff-stat", ix),
-                    stat.added as usize,
-                    stat.deleted as usize,
-                )
-                .into_any_element()
-            }))
+            .end_slot(
+                h_flex()
+                    .flex_none()
+                    .gap_1p5()
+                    .children(entry.diff_stat.map(|stat| {
+                        DiffStat::new(
+                            ("diff-stat", ix),
+                            stat.added as usize,
+                            stat.deleted as usize,
+                        )
+                    }))
+                    .child(
+                        Checkbox::new(("viewed", ix), toggle_state)
+                            .tooltip(ui::Tooltip::text(tooltip))
+                            .on_click(move |state, _, cx| {
+                                cx.stop_propagation();
+                                let viewed = *state == ToggleState::Selected;
+                                this.update(cx, |_, cx| {
+                                    cx.emit(DiffFileTreeEvent::SetViewed {
+                                        repo_path: viewed_repo_path.clone(),
+                                        viewed,
+                                    });
+                                })
+                                .ok();
+                            }),
+                    ),
+            )
             .into_any_element()
     }
 }

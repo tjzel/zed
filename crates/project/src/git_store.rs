@@ -4832,7 +4832,9 @@ impl GitStore {
                 .map(|(path, status)| proto::TreeDiffStatus {
                     path: path.as_ref().as_unix_str().to_owned(),
                     status: match status {
-                        TreeDiffStatus::Added {} => proto::tree_diff_status::Status::Added.into(),
+                        TreeDiffStatus::Added { .. } => {
+                            proto::tree_diff_status::Status::Added.into()
+                        }
                         TreeDiffStatus::Modified { .. } => {
                             proto::tree_diff_status::Status::Modified.into()
                         }
@@ -4841,10 +4843,10 @@ impl GitStore {
                         }
                     },
                     oid: match status {
-                        TreeDiffStatus::Deleted { old } | TreeDiffStatus::Modified { old } => {
+                        TreeDiffStatus::Deleted { old } | TreeDiffStatus::Modified { old, .. } => {
                             Some(old.to_string())
                         }
-                        TreeDiffStatus::Added => None,
+                        TreeDiffStatus::Added { .. } => None,
                     },
                 })
                 .collect(),
@@ -9794,13 +9796,16 @@ impl Repository {
                         .into_iter()
                         .filter_map(|entry| {
                             let status = match entry.status() {
-                                proto::tree_diff_status::Status::Added => TreeDiffStatus::Added,
+                                proto::tree_diff_status::Status::Added => TreeDiffStatus::Added {
+                                    new: git::Oid::default(),
+                                },
                                 proto::tree_diff_status::Status::Modified => {
                                     TreeDiffStatus::Modified {
                                         old: git::Oid::from_str(
                                             &entry.oid.context("missing oid").log_err()?,
                                         )
                                         .log_err()?,
+                                        new: git::Oid::default(),
                                     }
                                 }
                                 proto::tree_diff_status::Status::Deleted => {

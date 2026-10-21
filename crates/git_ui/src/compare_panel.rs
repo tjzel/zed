@@ -20,7 +20,10 @@ use workspace::Workspace;
 use workspace::dock::{DockPosition, Panel, PanelEvent};
 
 use crate::branch_diff::BranchDiff;
-use crate::diff_file_tree::{DiffFileTree, DiffFileTreeEvent, DiffTreeEntry, OpenTarget};
+use crate::diff_file_tree::{
+    DiffFileTree, DiffFileTreeEvent, DiffTreeEntry, OpenTarget, ReviewState,
+};
+use db::kvp::KeyValueStore;
 
 actions!(
     compare_panel,
@@ -58,6 +61,9 @@ pub struct ComparePanel {
     diff_buffer_list: Option<Entity<DiffBufferList>>,
     base_ref: Option<SharedString>,
     diff_stats: HashMap<RepoPath, git::status::DiffStat>,
+    /// Diff fingerprint each path had when it was marked viewed. A different
+    /// current fingerprint means the mark is stale.
+    viewed: HashMap<String, String>,
     file_tree: Entity<DiffFileTree>,
     fs: Arc<dyn Fs>,
     focus_handle: FocusHandle,
@@ -95,6 +101,9 @@ impl ComparePanel {
                 DiffFileTreeEvent::DiscardChanges { repo_paths, scope } => {
                     this.discard_changes(repo_paths.clone(), scope.clone(), window, cx);
                 }
+                DiffFileTreeEvent::SetViewed { repo_path, viewed } => {
+                    this.set_viewed(repo_path.clone(), *viewed, cx);
+                }
             },
         );
         let git_store = project.read(cx).git_store().clone();
@@ -116,6 +125,7 @@ impl ComparePanel {
             diff_buffer_list: None,
             base_ref: None,
             diff_stats: HashMap::default(),
+            viewed: HashMap::default(),
             file_tree,
             focus_handle: cx.focus_handle(),
             _tree_subscription: tree_subscription,
@@ -179,9 +189,74 @@ impl ComparePanel {
         self.diff_buffer_list = Some(diff_buffer_list);
         self.base_ref = Some(base_ref);
         self.diff_stats.clear();
+        self.viewed = self
+            .viewed_key(cx)
+            .and_then(|key| KeyValueStore::global(cx).read_kvp(&key).ok().flatten())
+            .and_then(|json| serde_json::from_str(&json).ok())
+            .unwrap_or_default();
         self.refresh_entries(cx);
         self.refresh_diff_stats(cx);
         cx.notify();
+    }
+
+    fn viewed_key(&self, cx: &App) -> Option<String> {
+        let base_ref = self.base_ref.as_ref()?;
+        let workspace_id = self
+            .workspace
+            .read_with(cx, |workspace, _| {
+                workspace
+                    .database_id()
+                    .map(|id| i64::from(id).to_string())
+                    .or(workspace.session_id())
+            })
+            .ok()
+            .flatten()?;
+        Some(format!("ComparePanel-viewed-{workspace_id}-{base_ref}"))
+    }
+
+    fn set_viewed(&mut self, repo_path: RepoPath, viewed: bool, cx: &mut Context<Self>) {
+        let fingerprint = self
+            .diff_buffer_list
+            .as_ref()
+            .and_then(|list| list.read(cx).diff_fingerprint_for_path(&repo_path));
+        let key = repo_path.as_unix_str().to_owned();
+        match (viewed, fingerprint) {
+            (true, Some(fingerprint)) => {
+                self.viewed.insert(key, fingerprint);
+            }
+            _ => {
+                self.viewed.remove(&key);
+            }
+        }
+        self.persist_viewed(cx);
+        self.refresh_entries(cx);
+    }
+
+    fn persist_viewed(&self, cx: &mut Context<Self>) {
+        let Some(key) = self.viewed_key(cx) else {
+            return;
+        };
+        let Ok(json) = serde_json::to_string(&self.viewed) else {
+            return;
+        };
+        let kvp = KeyValueStore::global(cx);
+        cx.background_spawn(async move { kvp.write_kvp(key, json).await })
+            .detach_and_log_err(cx);
+    }
+
+    fn review_state_for(&self, repo_path: &RepoPath, cx: &App) -> ReviewState {
+        let Some(marked) = self.viewed.get(repo_path.as_unix_str()) else {
+            return ReviewState::NotViewed;
+        };
+        let current = self
+            .diff_buffer_list
+            .as_ref()
+            .and_then(|list| list.read(cx).diff_fingerprint_for_path(repo_path));
+        if current.as_deref() == Some(marked.as_str()) {
+            ReviewState::Viewed
+        } else {
+            ReviewState::Stale
+        }
     }
 
     fn refresh_entries(&mut self, cx: &mut Context<Self>) {
@@ -196,6 +271,7 @@ impl ComparePanel {
                 statuses
                     .iter()
                     .map(|status| DiffTreeEntry {
+                        review: self.review_state_for(&status.repo_path, cx),
                         diff_stat: self.diff_stats.get(&status.repo_path).copied(),
                         has_worktree_changes: repository.as_ref().is_some_and(|repository| {
                             repository
